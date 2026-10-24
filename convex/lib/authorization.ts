@@ -67,7 +67,7 @@ export async function requirePatientAccess(
   return viewer;
 }
 
-export async function resolveDashboardPatient(ctx: QueryCtx) {
+export async function resolveDashboardPatient(ctx: DatabaseContext) {
   const viewer = await requireAppUser(ctx);
   if (viewer.role === "patient") {
     return { viewer, patient: viewer };

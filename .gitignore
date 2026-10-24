@@ -16,6 +16,7 @@
 **/__pycache__/
 /agent/.venv/
 /fetch_agents/.venv/
+/vision/.venv/
 
 # next.js
 /.next/

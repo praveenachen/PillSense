@@ -12,6 +12,9 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Local Python environments contain third-party JavaScript that is not
+    // part of the application lint surface.
+    "**/.venv/**",
   ]),
 ]);
 

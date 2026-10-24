@@ -35,6 +35,7 @@ import type * as occurrences from "../occurrences.js";
 import type * as patient from "../patient.js";
 import type * as refills from "../refills.js";
 import type * as reminders from "../reminders.js";
+import type * as vision from "../vision.js";
 
 import type {
   ApiFromModules,
@@ -70,6 +71,7 @@ declare const fullApi: ApiFromModules<{
   patient: typeof patient;
   refills: typeof refills;
   reminders: typeof reminders;
+  vision: typeof vision;
 }>;
 
 /**

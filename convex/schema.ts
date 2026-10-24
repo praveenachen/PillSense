@@ -240,6 +240,47 @@ export default defineSchema({
     .index("by_eventId", ["eventId"])
     .index("by_commandId", ["commandId"]),
 
+  cameraObservationSessions: defineTable({
+    sessionId: v.string(),
+    patientId: v.id("appUsers"),
+    initiatedBy: v.id("appUsers"),
+    source: v.literal("WINDOWS_OPENCV_MEDIAPIPE"),
+    status: v.union(
+      v.literal("ACTIVE"),
+      v.literal("STOPPED"),
+      v.literal("ERROR"),
+      v.literal("EXPIRED"),
+    ),
+    startedAt: v.number(),
+    endedAt: v.optional(v.number()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_sessionId", ["sessionId"])
+    .index("by_patient_and_startedAt", ["patientId", "startedAt"])
+    .index("by_patient_and_status", ["patientId", "status"]),
+
+  cameraObservationEvents: defineTable({
+    eventId: v.string(),
+    sessionId: v.id("cameraObservationSessions"),
+    patientId: v.id("appUsers"),
+    type: v.union(
+      v.literal("CAMERA_STARTED"),
+      v.literal("CAMERA_STOPPED"),
+      v.literal("PERSON_VISIBLE"),
+      v.literal("PERSON_NOT_VISIBLE"),
+      v.literal("HAND_AT_MOUTH_DETECTED"),
+      v.literal("CAMERA_ERROR"),
+    ),
+    source: v.literal("WINDOWS_OPENCV_MEDIAPIPE"),
+    occurredAt: v.number(),
+    receivedAt: v.number(),
+    diagnostic: v.optional(v.string()),
+  })
+    .index("by_eventId", ["eventId"])
+    .index("by_session_and_occurredAt", ["sessionId", "occurredAt"])
+    .index("by_patient_and_occurredAt", ["patientId", "occurredAt"]),
+
   reminderSettings: defineTable({
     patientId: v.id("appUsers"),
     upcomingWindowMinutes: v.number(),

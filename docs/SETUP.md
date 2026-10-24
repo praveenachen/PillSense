@@ -132,3 +132,28 @@ Optionally set `CARTESIA_VOICE_ID` to a tested Cartesia Playground voice. Never 
 ## M7 Fetch.ai Agentverse and ASI:One
 
 Install the isolated pinned uAgents environment, authorize one synthetic case in `/agent-activity`, connect the PillSense agent through Agentverse Inspector Mailbox, publish its official `AgentChatProtocol` manifest and profile, and verify the complete investigation in a real ASI:One conversation. The second uAgent is optional bonus orchestration. Follow `docs/AGENTVERSE.md`; no public tunnel, payment protocol, or second LLM path is used.
+
+## H6B local camera observation
+
+Use Python 3.11 and keep the camera bridge on loopback:
+
+```powershell
+py -3.11 -m venv vision\.venv
+.\vision\.venv\Scripts\python.exe -m pip install -r vision\requirements.txt
+.\vision\.venv\Scripts\python.exe -m vision.service
+```
+
+In separate terminals, run `npx convex dev` for the existing deployment and
+`npm run dev`. Sign in at `http://localhost:3000/demo`, remain on **Today**, and
+select **Start camera**. After camera permission is available, keep exactly one
+person in view and bring a hand toward the mouth. The panel reports the genuine
+observation and its time. In the Convex dashboard, inspect
+`cameraObservationSessions` and `cameraObservationEvents`; the event must belong
+to the authenticated synthetic patient's session and have source
+`WINDOWS_OPENCV_MEDIAPIPE`.
+
+Select **Stop camera**, confirm the panel reaches `STOPPED`, and confirm another
+camera application can open the webcam. Do not start browser `getUserMedia` at
+the same time. No raw frame is stored or uploaded, and an observation never
+marks a dose taken or triggers Bluetooth movement. See `vision/README.md` for
+configuration, privacy boundaries, standalone debugging, and focused tests.

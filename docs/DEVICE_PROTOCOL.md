@@ -54,6 +54,18 @@ Because `Stepper.step()` blocks firmware command processing during movement, a `
 
 Only begin a separate test after the prior outcome is reconciled, the device is powered off, the empty carousel and mechanism are physically reinspected, Slot 0 is manually realigned, and the firmware/device is intentionally reinitialized. Then load a fresh page session and repeat every confirmation. Reloading or rebooting is **not** a recovery strategy for an uncertain medication dispense; this procedure applies only to this empty-carousel hardware test. If the prior outcome remains uncertain, stop and investigate rather than attempting another movement.
 
+## H6A verified physical LED checkpoint
+
+The source-of-truth sketch is `firmware/PillSense_BLE_Motor_Test/PillSense_BLE_Motor_Test.ino`. It adds three physical status indicators without changing the verified BLE command protocol or motor sequence:
+
+- **Red on D2:** the device is powered and idle/not in use.
+- **Yellow on D3:** an accepted motor sequence is active, including outbound movement, the target pause, and return movement.
+- **Green on D4:** the complete commanded step sequence finished, including the return steps.
+
+The user physically verified H6A with an empty carousel: the supervised Slot 6 test moved from Slot 0 to Slot 6 and back to Slot 0, the LEDs followed the red/yellow/green sequence above, and the application received the matching BLE completion result. This records the user's physical test; Codex did not upload or operate the hardware.
+
+Green is not sensor evidence. The carousel still has no position sensor, so sequence completion does not independently verify physical Slot 0 alignment, pill release, collection, or ingestion. The operator must continue to align and inspect Slot 0 manually. The LED state is not persisted as trusted Convex evidence and does not enable automatic medication dispensing.
+
 ## Physical positions
 
 - Position `0` is reserved exclusively for manual home alignment. It is never a medication slot and must never be accepted by `DISPENSE`.

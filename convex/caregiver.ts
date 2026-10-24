@@ -51,18 +51,19 @@ export const setup = query({
             q.eq("medicationId", assignment.medicationId),
           )
           .unique();
-        if (!medication || !schedule || !medication.active || !schedule.active) {
+        if (!medication || !medication.active) {
           return null;
         }
         return {
           medicationId: medication._id,
           name: medication.name,
           instructions: medication.instructions,
+          productDetails: medication.productDetails ?? null,
           slot: assignment.slot,
           demoInventory: assignment.demoInventory,
-          localTime: schedule.localTime,
-          weekdays: schedule.weekdays,
-          timezone: schedule.timezone,
+          localTime: schedule?.active ? schedule.localTime : null,
+          weekdays: schedule?.active ? schedule.weekdays : [],
+          timezone: schedule?.active ? schedule.timezone : null,
         };
       }),
     );

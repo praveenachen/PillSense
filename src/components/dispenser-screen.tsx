@@ -57,8 +57,10 @@ export function DispenserScreen({ onOpenSetup }: { onOpenSetup: () => void }) {
           localTime: value.localTime,
           weekdays: value.weekdays,
           timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
-          demoInventory: value.supplyCount > 0 ? 1 : 0,
+          demoInventory: value.demoInventory,
           supplyCount: value.supplyCount,
+          scheduled: value.scheduled,
+          productDetails: value.productDetails,
         });
       } : undefined}
       saveUnavailableMessage="This account can’t add medications. Sign in with the account that manages this dispenser."

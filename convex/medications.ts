@@ -29,6 +29,13 @@ export const createWithAssignment = mutation({
     weekdays: v.array(weekdayValidator),
     timezone: v.string(),
     demoInventory: v.number(),
+    scheduled: v.optional(v.boolean()),
+    productDetails: v.optional(v.object({
+      brand: v.optional(v.string()), activeIngredient: v.optional(v.string()),
+      strength: v.optional(v.string()), dosageForm: v.optional(v.string()),
+      din: v.optional(v.string()), ndc: v.optional(v.string()),
+      quantity: v.optional(v.string()), otherVisibleDetails: v.array(v.string()),
+    })),
     /** Pills supplied for this slot; seeds the refill estimate. */
     supplyCount: v.optional(v.number()),
   },
@@ -38,9 +45,17 @@ export const createWithAssignment = mutation({
       throw new ConvexError("Pill count must be a whole number from 0 to 10000");
     }
     validateSlot(args.slot);
-    validateSchedule(args.localTime, args.weekdays, args.timezone);
+    if (args.scheduled !== false) validateSchedule(args.localTime, args.weekdays, args.timezone);
     validateMedicationText(args.name, args.instructions);
     validateDemoInventory(args.demoInventory);
+    if (args.productDetails) {
+      const details = args.productDetails;
+      if ([details.brand, details.activeIngredient, details.strength, details.dosageForm, details.din, details.ndc, details.quantity]
+        .some((value) => value !== undefined && value.length > 160) ||
+        details.otherVisibleDetails.length > 8 || details.otherVisibleDetails.some((value) => value.length > 160)) {
+        throw new ConvexError("Product details exceed allowed limits");
+      }
+    }
 
     const patient = await ctx.db.get("appUsers", args.patientId);
     if (!patient || patient.role !== "patient") {
@@ -70,20 +85,23 @@ export const createWithAssignment = mutation({
       patientId: args.patientId,
       name: args.name.trim(),
       instructions: args.instructions.trim(),
+      productDetails: args.productDetails,
       active: true,
       createdBy: caregiver._id,
       createdAt: now,
     });
-    await ctx.db.insert("medicationSchedules", {
-      patientId: args.patientId,
-      medicationId,
-      localTime: args.localTime,
-      weekdays: args.weekdays,
-      timezone: args.timezone,
-      active: true,
-      revision: 1,
-      createdAt: now,
-    });
+    if (args.scheduled !== false) {
+      await ctx.db.insert("medicationSchedules", {
+        patientId: args.patientId,
+        medicationId,
+        localTime: args.localTime,
+        weekdays: args.weekdays,
+        timezone: args.timezone,
+        active: true,
+        revision: 1,
+        createdAt: now,
+      });
+    }
     const assignmentId = await ctx.db.insert("compartmentAssignments", {
       deviceId: device._id,
       patientId: args.patientId,

@@ -7,6 +7,10 @@ import { api } from "../../convex/_generated/api";
 import { AuthRequired } from "./auth-required";
 import { INSTRUCTION_OPTIONS } from "../../convex/lib/instructionOptions";
 import { getAvailableSlots } from "@/lib/slots";
+import { MedicationCameraScanner } from "./medication-camera-scanner";
+import type { MedicationScan } from "@/lib/medication-scan";
+import { productDetailsForSave, scanFormDefaults } from "@/lib/medication-scan";
+import { medicationSaveError } from "../lib/medication-save-error";
 
 const weekdays = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"] as const;
 type Weekday = (typeof weekdays)[number];
@@ -39,6 +43,9 @@ function AuthenticatedMedicationSetup() {
     "SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT",
   ]);
   const [timezone, setTimezone] = useState("America/Toronto");
+  const [name, setName] = useState("");
+  const [scan, setScan] = useState<MedicationScan | null>(null);
+  const [scheduled, setScheduled] = useState(true);
 
   if (setup === undefined) {
     return <StateCard title="Loading care team…">Fetching the authenticated caregiver workspace.</StateCard>;
@@ -84,15 +91,18 @@ function AuthenticatedMedicationSetup() {
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    const formElement = event.currentTarget;
     setError(null);
     setSuccess(null);
     setSaving(true);
-    const form = new FormData(event.currentTarget);
+    const form = new FormData(formElement);
     try {
       const result = await createMedication({
         patientId: readySetup.patient.id,
         name: String(form.get("name") ?? ""),
-        instructions: String(form.get("instructions") ?? ""),
+        instructions: scheduled ? String(form.get("instructions") ?? "") : "",
+        scheduled,
+        productDetails: scan ? productDetailsForSave(scan) : undefined,
         slot: Number(form.get("slot")),
         localTime: String(form.get("localTime") ?? ""),
         weekdays: selectedDays,
@@ -100,10 +110,11 @@ function AuthenticatedMedicationSetup() {
         demoInventory: Number(form.get("demoInventory")),
       });
       setSuccess(`Medication assigned to Slot ${result.slot}.`);
-      event.currentTarget.reset();
+      formElement.reset();
       setSelectedDays([...weekdays]);
+      setName(""); setScan(null); setScheduled(true);
     } catch (caught) {
-      setError(messageFromError(caught));
+      setError(medicationSaveError(caught));
     } finally {
       setSaving(false);
     }
@@ -120,9 +131,27 @@ function AuthenticatedMedicationSetup() {
           <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600">{readySetup.device.label}</span>
         </div>
 
+        <MedicationCameraScanner onScan={(result) => {
+          setScan(result);
+          const defaults = scanFormDefaults(result);
+          setName(defaults.name);
+          setScheduled(defaults.scheduled);
+          setSuccess(null);
+        }} />
+        {scan && <div className="mt-5 rounded-xl border border-sky-200 bg-sky-50 p-4">
+          <h3 className="font-semibold">Visible label details · review and correct</h3>
+          <p className="mt-1 text-xs text-slate-600">Blank fields were not readable. Package quantity is not the pill count loaded into the dispenser.</p>
+          <div className="mt-3 grid gap-3 sm:grid-cols-2">
+            {([ ["brand", "Brand"], ["activeIngredient", "Active ingredient"], ["strength", "Strength"], ["dosageForm", "Dosage form"], ["din", "DIN"], ["ndc", "NDC"], ["quantity", "Package quantity"] ] as const).map(([field, label]) =>
+              <Field key={field} label={label} htmlFor={`scan-${field}`}><input id={`scan-${field}`} value={scan[field] ?? ""} maxLength={160} onChange={(event) => setScan({ ...scan, [field]: event.target.value || null })} className="input" /></Field>
+            )}
+          </div>
+          {scan.otherVisibleDetails.length > 0 && <p className="mt-3 text-xs text-slate-600">Other visible details: {scan.otherVisibleDetails.join(" · ")}</p>}
+        </div>}
+
         <div className="mt-6 grid gap-5 sm:grid-cols-2">
           <Field label="Medication name" htmlFor="name">
-            <input id="name" name="name" required maxLength={120} placeholder="Iron Pills" className="input" />
+            <input id="name" name="name" required maxLength={120} placeholder="Iron Pills" value={name} onChange={(event) => setName(event.target.value)} className="input" />
           </Field>
           <Field label="Compartment" htmlFor="slot">
             <select id="slot" name="slot" required defaultValue="" className="input">
@@ -134,26 +163,31 @@ function AuthenticatedMedicationSetup() {
               ))}
             </select>
           </Field>
-          <Field label="Local time" htmlFor="localTime">
+          {scheduled && <Field label="Local time" htmlFor="localTime">
             <input id="localTime" name="localTime" required type="time" defaultValue="09:00" className="input" />
-          </Field>
-          <Field label="IANA timezone" htmlFor="timezone">
+          </Field>}
+          {scheduled && <Field label="IANA timezone" htmlFor="timezone">
             <input id="timezone" required value={timezone} onChange={(event) => setTimezone(event.target.value)} className="input" />
-          </Field>
+          </Field>}
           <Field label="Demo inventory" htmlFor="demoInventory">
             <select id="demoInventory" name="demoInventory" defaultValue="1" className="input">
               <option value="1">1 inert demo pill loaded</option>
               <option value="0">Empty</option>
             </select>
           </Field>
-          <Field label="Instructions" htmlFor="instructions" wide>
+          {scheduled && <Field label="Instructions" htmlFor="instructions" wide>
             <select id="instructions" name="instructions" defaultValue={INSTRUCTION_OPTIONS[0]} className="input">
               {INSTRUCTION_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}
             </select>
-          </Field>
+          </Field>}
         </div>
 
-        <fieldset className="mt-5">
+        <label className="mt-5 flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">
+          <input type="checkbox" checked={scheduled} onChange={(event) => setScheduled(event.target.checked)} className="mt-1" />
+          <span><strong>Configure scheduled dispensing</strong><br />Leave unchecked for an unscheduled OTC medication. Scanning a label never supplies directions or starts reminders.</span>
+        </label>
+
+        {scheduled && <fieldset className="mt-5">
           <legend className="text-sm font-semibold text-slate-700">Scheduled weekdays</legend>
           <div className="mt-2 flex flex-wrap gap-2">
             {weekdays.map((day) => {
@@ -171,7 +205,7 @@ function AuthenticatedMedicationSetup() {
               );
             })}
           </div>
-        </fieldset>
+        </fieldset>}
 
         {error && <InlineError message={error} />}
         {success && <p className="mt-4 rounded-xl bg-emerald-50 p-3 text-sm text-emerald-800">{success}</p>}
@@ -192,8 +226,9 @@ function AuthenticatedMedicationSetup() {
                   <span className="font-semibold">{medication.name}</span>
                   <span className="rounded-full bg-teal-50 px-2.5 py-1 text-xs font-bold text-teal-800">Slot {medication.slot}</span>
                 </div>
-                <p className="mt-2 text-sm text-slate-600">{medication.localTime} · {medication.timezone}</p>
+                <p className="mt-2 text-sm text-slate-600">{medication.localTime ? `${medication.localTime} · ${medication.timezone}` : "Unscheduled · no automatic dispensing"}</p>
                 <p className="mt-1 text-xs text-slate-500">{medication.weekdays.join(" · ")} · {medication.demoInventory} inert pill</p>
+                {medication.productDetails && <p className="mt-1 text-xs text-slate-500">{[medication.productDetails.activeIngredient, medication.productDetails.strength, medication.productDetails.dosageForm, medication.productDetails.din && `DIN ${medication.productDetails.din}`].filter(Boolean).join(" · ")}</p>}
               </li>
             ))}
           </ul>

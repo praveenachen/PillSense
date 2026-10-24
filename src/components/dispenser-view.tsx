@@ -7,7 +7,7 @@ import { Icon, type IconName } from "./mobile-ui";
 import { PhoneOverlay } from "./phone-overlay";
 import { SlotMedicationForm, type SlotMedicationInput } from "./slot-medication-form";
 
-type MedicationAssignment = { id: string; name: string; instructions?: string; slot: number; localTime: string; supplyCount?: number | null };
+type MedicationAssignment = { id: string; name: string; instructions?: string; slot: number; localTime: string | null; supplyCount?: number | null };
 type DeviceRuntime = { state: string; connected: boolean; homeAligned: boolean; faultCode: string | null } | null;
 export type DispenserStatusTone = "ready" | "busy" | "setup" | "offline";
 export type DispenserDeviceView = {

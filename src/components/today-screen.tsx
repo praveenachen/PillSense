@@ -71,7 +71,7 @@ function AuthenticatedToday({ account, onOpenDispenser, onOpenSchedule, onOpenVo
 
   const timeline = useMemo(() => {
     if (!dashboard || dashboard.status !== "ready" || !doses) return null;
-    const medications: ScheduledMedication[] = dashboard.medications.map((m) => ({ id: m.id, name: m.name, instructions: m.instructions ?? "", slot: m.slot, localTime: m.localTime, weekdays: m.weekdays }));
+    const medications: ScheduledMedication[] = dashboard.medications.filter((m) => m.localTime !== null).map((m) => ({ id: m.id, name: m.name, instructions: m.instructions ?? "", slot: m.slot, localTime: m.localTime!, weekdays: m.weekdays }));
     const occurrences: DoseOccurrence[] = doses.occurrences.map((o) => ({ id: o.id, mode: o.mode, medicationName: o.medicationName, instructions: o.instructions ?? "", slot: o.slot, scheduledFor: o.scheduledFor, eligibleFrom: o.eligibleFrom, expiresAt: o.expiresAt, attemptStatus: o.attemptStatus, ingestionReport: o.ingestionReport }));
     return buildTodayTimeline(medications, occurrences, now);
   }, [dashboard, doses, now]);

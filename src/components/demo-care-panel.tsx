@@ -41,7 +41,7 @@ export function DemoCarePanel() {
   return <AuthorizedCare patientName={setup.patient.displayName} medications={setup.medications} />;
 }
 
-type SetupMedication = { medicationId: string; name: string; slot: number; localTime: string; demoInventory: number; instructions: string | null };
+type SetupMedication = { medicationId: string; name: string; slot: number; localTime: string | null; demoInventory: number; instructions: string | null };
 
 function AuthorizedCare({ patientName, medications }: { patientName: string; medications: SetupMedication[] }) {
   const [tab, setTab] = useState<CareTab>("overview");
@@ -183,7 +183,7 @@ function AuthorizedCare({ patientName, medications }: { patientName: string; med
                 {medications.map((m) => (
                   <li key={m.medicationId} className="flex items-center gap-3 p-3">
                     <span aria-hidden="true" className="grid size-9 shrink-0 place-items-center rounded-full bg-[#d9f5ef] text-sm font-bold text-[#0f766e]">{m.slot}</span>
-                    <span className="min-w-0 flex-1"><span className="block truncate text-sm font-semibold text-[#0f172a]">{m.name}</span><span className="block text-xs text-[#64748b]">{m.localTime} · demo inventory {m.demoInventory} inert {m.demoInventory === 1 ? "pill" : "pills"}</span></span>
+                    <span className="min-w-0 flex-1"><span className="block truncate text-sm font-semibold text-[#0f172a]">{m.name}</span><span className="block text-xs text-[#64748b]">{m.localTime ?? "Unscheduled"} · demo inventory {m.demoInventory} inert {m.demoInventory === 1 ? "pill" : "pills"}</span></span>
                   </li>
                 ))}
               </ul>

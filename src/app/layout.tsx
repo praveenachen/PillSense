@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Fraunces, Geist, Geist_Mono } from "next/font/google";
 import { Providers } from "./providers";
 import { PersistentArduinoLab } from "@/components/persistent-arduino-lab";
+import { OnboardingGate } from "@/components/onboarding-gate";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -40,8 +41,10 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
     >
       <body className="min-h-full flex flex-col">
         <Providers>
-          {children}
-          <PersistentArduinoLab authUiConfigured={authUiConfigured} />
+          <OnboardingGate>
+            {children}
+            <PersistentArduinoLab authUiConfigured={authUiConfigured} />
+          </OnboardingGate>
         </Providers>
       </body>
     </html>

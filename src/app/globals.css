@@ -180,8 +180,123 @@ body {
 .ps-ring-live { animation: ps-ring 2.4s ease-out infinite; }
 .ps-bar-live { animation: ps-bar 0.9s ease-in-out infinite; transform-origin: center; }
 
+/* Camera guide: decorative only; image sampling and capture stay in the scanner component. */
+.ps-scan-viewport { position: relative; }
+.ps-scan-frozen-image {
+  position: absolute;
+  inset: 0;
+  background-position: center;
+  background-size: cover;
+}
+.ps-scan-overlay {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  background: linear-gradient(180deg, rgb(3 24 31 / 0.36), transparent 27%, transparent 72%, rgb(3 24 31 / 0.4));
+}
+.ps-scan-status, .ps-scan-hint {
+  position: absolute;
+  z-index: 2;
+  left: 50%;
+  width: max-content;
+  max-width: calc(100% - 1rem);
+  transform: translateX(-50%);
+  border-radius: 999px;
+  background: rgb(3 24 31 / 0.76);
+  color: white;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  line-height: 1.2;
+  text-align: center;
+  text-shadow: 0 1px 2px rgb(0 0 0 / 0.5);
+}
+.ps-scan-status { top: 0.55rem; padding: 0.35rem 0.7rem; }
+.ps-scan-hint { bottom: 0.55rem; padding: 0.3rem 0.6rem; }
+.ps-scan-frame {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  height: 72%;
+  aspect-ratio: 1;
+  transform: translate(-50%, -50%);
+}
+.ps-scan-viewport[data-phase="analyzing"] .ps-scan-frame {
+  border: 2px solid rgb(143 255 238 / 0.9);
+  border-radius: 0.6rem;
+  box-shadow: 0 0 0 999px rgb(3 24 31 / 0.16), inset 0 0 22px rgb(35 240 210 / 0.18), 0 0 16px rgb(35 240 210 / 0.52);
+  animation: ps-scan-focus 1.2s ease-in-out infinite;
+}
+.ps-scan-corner {
+  position: absolute;
+  width: 1.65rem;
+  height: 1.65rem;
+  border-color: #77f4e3;
+  border-style: solid;
+  border-width: 0;
+  filter: drop-shadow(0 0 5px rgb(0 0 0 / 0.8));
+  transition: border-color 0.2s ease;
+}
+.ps-scan-corner-tl { top: 0; left: 0; border-top-width: 3px; border-left-width: 3px; border-top-left-radius: 0.6rem; }
+.ps-scan-corner-tr { top: 0; right: 0; border-top-width: 3px; border-right-width: 3px; border-top-right-radius: 0.6rem; }
+.ps-scan-corner-bl { bottom: 0; left: 0; border-bottom-width: 3px; border-left-width: 3px; border-bottom-left-radius: 0.6rem; }
+.ps-scan-corner-br { bottom: 0; right: 0; border-bottom-width: 3px; border-right-width: 3px; border-bottom-right-radius: 0.6rem; }
+.ps-scan-viewport[data-phase="complete"] .ps-scan-corner { border-color: #86efac; }
+.ps-scan-viewport[data-phase="analyzing"] .ps-scan-corner { border-color: white; }
+.ps-scan-beam {
+  position: absolute;
+  top: 10%;
+  right: 0.2rem;
+  left: 0.2rem;
+  height: 2px;
+  background: #8fffee;
+  box-shadow: 0 0 8px 2px rgb(35 240 210 / 0.75), 0 0 22px 8px rgb(35 240 210 / 0.18);
+  animation: ps-scan-sweep 2.5s ease-in-out infinite;
+}
+.ps-scan-viewport[data-phase="analyzing"] .ps-scan-beam { animation-duration: 1.25s; }
+.ps-scan-loading::before {
+  content: "";
+  display: inline-block;
+  width: 0.65rem;
+  height: 0.65rem;
+  margin-right: 0.35rem;
+  border: 2px solid rgb(255 255 255 / 0.45);
+  border-top-color: white;
+  border-radius: 50%;
+  vertical-align: -0.08rem;
+  animation: ps-scan-spin 0.8s linear infinite;
+}
+.ps-scan-check {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  display: grid;
+  width: 2.4rem;
+  height: 2.4rem;
+  place-items: center;
+  transform: translate(-50%, -50%);
+  border: 2px solid white;
+  border-radius: 50%;
+  background: #0f766e;
+  color: white;
+  font-size: 1.4rem;
+  box-shadow: 0 0 0 5px rgb(15 118 110 / 0.35);
+}
+@keyframes ps-scan-sweep {
+  0%, 100% { top: 10%; opacity: 0.55; }
+  50% { top: 86%; opacity: 1; }
+}
+@keyframes ps-scan-focus {
+  0%, 100% { box-shadow: 0 0 0 999px rgb(3 24 31 / 0.16), inset 0 0 18px rgb(35 240 210 / 0.12), 0 0 8px rgb(35 240 210 / 0.4); }
+  50% { box-shadow: 0 0 0 999px rgb(3 24 31 / 0.16), inset 0 0 30px rgb(35 240 210 / 0.3), 0 0 22px rgb(35 240 210 / 0.8); }
+}
+@keyframes ps-scan-spin { to { transform: rotate(360deg); } }
+
 @media (prefers-reduced-motion: reduce) {
   .ps-ring-live, .ps-bar-live { animation: none; }
+  .ps-scan-beam { animation: none; top: 50%; }
+  .ps-scan-viewport[data-phase="analyzing"] .ps-scan-frame, .ps-scan-loading::before { animation: none; }
   .ps-cta { transition: none; }
 }
 

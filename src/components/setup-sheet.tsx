@@ -9,7 +9,7 @@ import { CarouselGraphic, Icon, MedicationIcon } from "./mobile-ui";
 const steps = ["Connect", "Map Slots", "Verify", "Complete"] as const;
 const SUPPORTED_TEST_SLOT = 6;
 
-type SlotAssignment = { name: string; localTime: string; demoInventory: number };
+type SlotAssignment = { name: string; localTime: string | null; demoInventory: number };
 
 /**
  * Setup & Slot Mapping. Purely informational/navigational: selecting a slot or advancing a step
@@ -113,7 +113,7 @@ function SetupBody({ step, selected, onSelect, onClose }: { step: number; select
                 {selectedAssignment && <MedicationIcon size={44} />}
                 <div className="min-w-0 flex-1">
                   <p className="text-[0.95rem] font-semibold text-[#0f172a]">Slot {selected}</p>
-                  <p className="truncate text-sm text-[#475569]">{selectedAssignment ? `${selectedAssignment.name} · ${selectedAssignment.localTime}` : "No medication assigned"}</p>
+                  <p className="truncate text-sm text-[#475569]">{selectedAssignment ? `${selectedAssignment.name} · ${selectedAssignment.localTime ?? "Unscheduled"}` : "No medication assigned"}</p>
                 </div>
                 {selected === SUPPORTED_TEST_SLOT && <span className="shrink-0 rounded-full bg-[#fef3d7] px-2.5 py-0.5 text-[0.7rem] font-semibold text-[#8a5a00]">Supervised test slot</span>}
               </div>
@@ -132,7 +132,7 @@ function SetupBody({ step, selected, onSelect, onClose }: { step: number; select
                   <button type="button" onClick={() => onSelect(slot)} aria-pressed={selected === slot} className={`ps-focus flex min-h-12 w-full items-center gap-3 px-3 text-left ${selected === slot ? "bg-[#d9f5ef]/60" : ""}`}>
                     <span aria-hidden="true" className={`grid size-7 shrink-0 place-items-center rounded-full text-xs font-bold ${selected === slot ? "bg-[#0f766e] text-white" : "bg-[#e8eef5] text-[#475569]"}`}>{slot}</span>
                     <span className={`min-w-0 flex-1 truncate text-sm ${assignment ? "font-medium text-[#0f172a]" : "text-[#64748b]"}`}>{assignment ? assignment.name : "Unassigned"}</span>
-                    {assignment && <span className="text-xs text-[#64748b]">{assignment.localTime}</span>}
+                    {assignment && <span className="text-xs text-[#64748b]">{assignment.localTime ?? "Unscheduled"}</span>}
                   </button>
                 </li>
               );

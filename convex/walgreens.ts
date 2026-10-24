@@ -20,7 +20,7 @@ async function sha256(value: string) {
 
 function currentMode(): "SANDBOX" | "MOCK" {
   if (env.WALGREENS_MODE === "sandbox") return "SANDBOX";
-  if (env.WALGREENS_MODE === "mock") return "MOCK";
+  if (env.WALGREENS_MODE === "mock" || (!env.WALGREENS_MODE && !env.WALGREENS_REFILL_API_KEY)) return "MOCK";
   throw new ConvexError("WALGREENS_MODE must be sandbox or mock");
 }
 
@@ -132,7 +132,7 @@ export const createSession = action({
   handler: async (ctx, args): Promise<{ status: string; landingUrl: string | null; environment: "SANDBOX" | "MOCK"; errorCode?: string }> => {
     const environment = currentMode();
     if (!TEST_RX_NUMBERS.has(args.rxNumber)) throw new ConvexError("Only official sandbox test prescription numbers are allowed");
-    const callbackBase = validateCallbackBase(env.WALGREENS_CALLBACK_URL);
+    const callbackBase = validateCallbackBase(env.WALGREENS_CALLBACK_URL ?? `${env.CONVEX_SITE_URL}/walgreens/refill/callback`);
     const token = `${crypto.randomUUID()}${crypto.randomUUID()}`.replaceAll("-", "");
     const callbackUrl = new URL(callbackBase);
     callbackUrl.pathname = `${callbackBase.pathname}/${token}`;

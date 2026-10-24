@@ -13,13 +13,13 @@ WALGREENS_REFILL_AFF_ID=<sandbox affiliate ID>
 WALGREENS_CALLBACK_URL=https://<deployment>.convex.site/walgreens/refill/callback
 ```
 
-Use `WALGREENS_MODE=mock` when sandbox access is unavailable. Mock mode needs no Walgreens credentials, but still needs the public HTTPS callback URL. A mock `landingUrl` points directly to the callback and simulates `DONE`; it is **not** Walgreens checkout. Only [Walgreens' official sandbox Rx numbers](https://developer.walgreens.com/support/rx-numbers), such as `0459772-59382`, are accepted. The server only posts to the [documented QA endpoint](https://developer.walgreens.com/sites/default/files/v2_RXRefillAPI.html); there is no production endpoint in the adapter.
+Use `WALGREENS_MODE=mock` when sandbox access is unavailable. An unset mode with no API key also selects mock mode. Mock mode needs no Walgreens credentials; it uses the Convex site callback URL unless `WALGREENS_CALLBACK_URL` is set. A mock `landingUrl` points directly to the callback and simulates `DONE`; it is **not** Walgreens checkout. Only [Walgreens' official sandbox Rx numbers](https://developer.walgreens.com/support/rx-numbers), such as `0459772-59382`, are accepted. The server only posts to the [documented QA endpoint](https://developer.walgreens.com/sites/default/files/v2_RXRefillAPI.html); there is no production endpoint in the adapter.
 
-The exact callback URL is the configured `WALGREENS_CALLBACK_URL` above. It must be a publicly reachable HTTPS URL on the Convex site domain and end at `/walgreens/refill/callback`. Register that URL with Walgreens if their sandbox account requires registration. Keep its path and scheme exact; the server appends a single-use token for each checkout.
+The callback URL is the configured `WALGREENS_CALLBACK_URL` above, or the Convex site URL with `/walgreens/refill/callback` appended. It must be publicly reachable over HTTPS and end at `/walgreens/refill/callback`. Register that URL with Walgreens if their sandbox account requires registration. Keep its path and scheme exact; the server appends a single-use token for each checkout.
 
 ## Frontend integration contract
 
-The caregiver UI is being redesigned, so no frontend files were edited. Add these calls to the existing refill case view:
+The caregiver refill card now calls the existing approval and session actions and shows checkout status. The sequence is:
 
 Latest `main` adds `src/components/refill-bell.tsx` on Today. Its “Order” action currently calls the existing caregiver-only `refills.transition` review/request mutations; it does not open Walgreens checkout. Keep the Walgreens approval and hosted URL in the authenticated caregiver flow. The frontend teammate should resolve the patient-facing button behavior and wording separately; it must not bypass caregiver authorization.
 

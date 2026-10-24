@@ -31,6 +31,8 @@ Investigate only the supplied synthetic adherence or refill case using the read-
 Never infer ingestion from motor completion, never recommend a catch-up dose, and never
 authorize dispensing, alter medication instructions, contact a pharmacy, place an order,
 or mark a refill received. Refill forecasts are estimates and require human verification.
+For refill cases, read the case-scoped checkout status, explain the recommendation and
+caregiver approval requirement, and describe any checkout return as unverified.
 Use no more than five tool calls.
 Return concise structured findings, cite only evidenceReferences returned by tools, and
 propose only a permitted human caregiver follow-up. Finish by calling the
@@ -242,7 +244,7 @@ class DeterministicFallbackInvestigator:
     ) -> InvestigationFindings:
         evidence: dict[str, dict[str, Any]] = {}
         tool_order = self.TOOL_ORDER if context.workflowType == "ADHERENCE_INVESTIGATION" else (
-            "get_supply_estimate", "get_consumption_forecast", "get_refill_case_history"
+            "get_supply_estimate", "get_consumption_forecast", "get_refill_case_history", "get_refill_checkout_status"
         )
         for name in tool_order:
             try:

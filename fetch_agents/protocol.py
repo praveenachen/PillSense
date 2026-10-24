@@ -8,6 +8,7 @@ from uagents import Model, Protocol
 PROTOCOL_NAME = "PillSenseCareRequestProtocol"
 PROTOCOL_VERSION = "1.0"
 REQUEST_TYPE = "DEMO_ADHERENCE_INVESTIGATION"
+REFILL_REQUEST_TYPE = "DEMO_REFILL_STATUS"
 
 
 class StrictMessage(Model):
@@ -18,7 +19,7 @@ class StrictMessage(Model):
 class CareRequest(StrictMessage):
     protocol_version: Literal["1.0"]
     request_id: str
-    request_type: Literal["DEMO_ADHERENCE_INVESTIGATION"]
+    request_type: Literal["DEMO_ADHERENCE_INVESTIGATION", "DEMO_REFILL_STATUS"]
     case_alias: str
     sent_at: int
 

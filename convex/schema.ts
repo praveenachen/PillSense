@@ -446,6 +446,44 @@ export default defineSchema({
     .index("by_patient_and_status", ["patientId", "status"])
     .index("by_medication", ["medicationId"]),
 
+  walgreensCheckouts: defineTable({
+    refillCaseId: v.id("refillCases"),
+    patientId: v.id("appUsers"),
+    caregiverId: v.id("appUsers"),
+    provider: v.literal("WALGREENS"),
+    environment: v.union(v.literal("SANDBOX"), v.literal("MOCK")),
+    status: v.union(
+      v.literal("APPROVED"), v.literal("REQUESTING"), v.literal("CHECKOUT_READY"),
+      v.literal("CHECKOUT_RETURNED_UNVERIFIED"), v.literal("CANCELLED"),
+      v.literal("BACK"), v.literal("ERROR"),
+    ),
+    idempotencyKey: v.optional(v.string()),
+    correlationId: v.optional(v.string()),
+    callbackTokenHash: v.optional(v.string()),
+    callbackExpiresAt: v.optional(v.number()),
+    callbackConsumedAt: v.optional(v.number()),
+    landingUrl: v.optional(v.string()),
+    errorCode: v.optional(v.string()),
+    approvedAt: v.number(),
+    requestedAt: v.optional(v.number()),
+    returnedAt: v.optional(v.number()),
+    updatedAt: v.number(),
+  })
+    .index("by_case", ["refillCaseId"])
+    .index("by_idempotency_key", ["idempotencyKey"])
+    .index("by_callback_token_hash", ["callbackTokenHash"]),
+
+  walgreensCheckoutEvents: defineTable({
+    checkoutId: v.id("walgreensCheckouts"),
+    type: v.union(
+      v.literal("APPROVED"), v.literal("REQUESTING"), v.literal("CHECKOUT_READY"),
+      v.literal("CHECKOUT_RETURNED_UNVERIFIED"), v.literal("CANCELLED"),
+      v.literal("BACK"), v.literal("ERROR"),
+    ),
+    actorId: v.optional(v.id("appUsers")),
+    occurredAt: v.number(),
+  }).index("by_checkout", ["checkoutId"]),
+
   refillCaseTransitions: defineTable({
     caseId: v.id("refillCases"),
     patientId: v.id("appUsers"),
@@ -580,15 +618,17 @@ export default defineSchema({
     alias: v.string(),
     caregiverId: v.id("appUsers"),
     patientId: v.id("appUsers"),
-    careCaseId: v.id("careCases"),
+    careCaseId: v.optional(v.id("careCases")),
+    refillCaseId: v.optional(v.id("refillCases")),
     caseVersion: v.number(),
-    requestType: v.literal("DEMO_ADHERENCE_INVESTIGATION"),
+    requestType: v.union(v.literal("DEMO_ADHERENCE_INVESTIGATION"), v.literal("DEMO_REFILL_STATUS")),
     status: v.union(v.literal("ACTIVE"), v.literal("REVOKED")),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
     .index("by_alias", ["alias"])
     .index("by_case", ["careCaseId"])
+    .index("by_refill_case", ["refillCaseId"])
     .index("by_caregiver_and_updatedAt", ["caregiverId", "updatedAt"]),
 
   agentverseRequests: defineTable({
@@ -599,12 +639,14 @@ export default defineSchema({
     transport: v.optional(
       v.union(v.literal("UAGENT_A2A"), v.literal("ASI_ONE_ACP")),
     ),
-    requestType: v.literal("DEMO_ADHERENCE_INVESTIGATION"),
+    requestType: v.union(v.literal("DEMO_ADHERENCE_INVESTIGATION"), v.literal("DEMO_REFILL_STATUS")),
     caseAlias: v.string(),
     scopeId: v.id("agentverseScopes"),
     caregiverId: v.id("appUsers"),
     patientId: v.id("appUsers"),
-    careCaseId: v.id("careCases"),
+    careCaseId: v.optional(v.id("careCases")),
+    refillCaseId: v.optional(v.id("refillCases")),
+    caseVersion: v.optional(v.number()),
     agentRunId: v.optional(v.id("agentRuns")),
     status: v.union(
       v.literal("ACK"),
@@ -647,6 +689,7 @@ export default defineSchema({
       v.literal("get_supply_estimate"),
       v.literal("get_consumption_forecast"),
       v.literal("get_refill_case_history"),
+      v.literal("get_refill_checkout_status"),
       v.literal("submit_investigation"),
       v.literal("workflow_failure"),
     ),

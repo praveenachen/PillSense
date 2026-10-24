@@ -17,6 +17,7 @@ TOOL_OPERATIONS = {
     "get_supply_estimate": "getSupplyEstimate",
     "get_consumption_forecast": "getConsumptionForecast",
     "get_refill_case_history": "getRefillCaseHistory",
+    "get_refill_checkout_status": "getRefillCheckoutStatus",
 }
 
 TOOL_DESCRIPTIONS = {
@@ -29,11 +30,12 @@ TOOL_DESCRIPTIONS = {
     "get_supply_estimate": "Read the caregiver-entered supply estimate and its explicit confidence limitations.",
     "get_consumption_forecast": "Read the timezone-aware schedule consumption forecast.",
     "get_refill_case_history": "Read append-only refill workflow transitions for this case.",
+    "get_refill_checkout_status": "Read safe caregiver approval and checkout progress; a return never proves fulfillment.",
 }
 
 WORKFLOW_TOOLS = {
     "ADHERENCE_INVESTIGATION": set(TOOL_OPERATIONS) - {"get_supply_estimate", "get_consumption_forecast", "get_refill_case_history"},
-    "REFILL_INVESTIGATION": {"get_supply_estimate", "get_consumption_forecast", "get_refill_case_history"},
+    "REFILL_INVESTIGATION": {"get_supply_estimate", "get_consumption_forecast", "get_refill_case_history", "get_refill_checkout_status"},
 }
 
 def tool_definitions_for(workflow_type: str) -> list[dict[str, Any]]:

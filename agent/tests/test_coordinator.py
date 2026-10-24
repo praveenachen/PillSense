@@ -183,9 +183,16 @@ def test_refill_registry_rejects_adherence_and_mutating_tools() -> None:
         registry.execute("order_refill")
 
 
+def test_refill_registry_exposes_read_only_checkout_status_tool() -> None:
+    registry = ToolRegistry(FakeBridge(), claimed_run(), workflow_type="REFILL_INVESTIGATION")
+    assert "get_refill_checkout_status" in registry.allowed
+    assert "approve_refill" not in registry.allowed
+
+
 def test_claude_refill_investigation_uses_read_only_supply_tools() -> None:
     messages = FakeMessages([
-        response(tool_use("supply", "get_supply_estimate"), tool_use("forecast", "get_consumption_forecast")),
+        response(tool_use("supply", "get_supply_estimate"), tool_use("forecast", "get_consumption_forecast"),
+                 tool_use("checkout", "get_refill_checkout_status")),
         response(tool_use("final", "submit_investigation_findings", valid_refill_findings())),
     ])
     bridge = FakeBridge()
@@ -195,7 +202,7 @@ def test_claude_refill_investigation_uses_read_only_supply_tools() -> None:
         ToolRegistry(bridge, claimed_run(), workflow_type="REFILL_INVESTIGATION"),
     )
     assert findings.proposedFollowUp.actionType.value == "CHECK_PHYSICAL_SUPPLY"
-    assert bridge.calls == ["getSupplyEstimate", "getConsumptionForecast"]
+    assert bridge.calls == ["getSupplyEstimate", "getConsumptionForecast", "getRefillCheckoutStatus"]
 
 
 def test_refill_deterministic_fallback_is_non_mutating() -> None:
@@ -205,7 +212,7 @@ def test_refill_deterministic_fallback_is_non_mutating() -> None:
     )
     assert findings.items[0].category.value == "POSSIBLE_SUPPLY_ISSUE"
     assert findings.proposedFollowUp.actionType.value == "CHECK_PHYSICAL_SUPPLY"
-    assert bridge.calls == ["getSupplyEstimate", "getConsumptionForecast", "getRefillCaseHistory"]
+    assert bridge.calls == ["getSupplyEstimate", "getConsumptionForecast", "getRefillCaseHistory", "getRefillCheckoutStatus"]
 
 
 def test_deterministic_fallback_survives_a_tool_failure() -> None:

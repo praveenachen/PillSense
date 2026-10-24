@@ -43,7 +43,7 @@ The coordinator uses `claude-sonnet-5-5` when `ANTHROPIC_API_KEY` is present. If
 
 ## Clerk + Convex authentication (remaining manual configuration)
 
-The React boundary is scaffolded with Clerk's `ClerkProvider` and Convex's `ConvexProviderWithClerk`. It activates only when both `NEXT_PUBLIC_CONVEX_URL` and `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` exist. Without them, the M0 route shells render but receive no Convex client and query no protected data.
+The React boundary is scaffolded with Clerk's `ClerkProvider` and Convex's `ConvexProviderWithClerk`. It activates only when both `NEXT_PUBLIC_CONVEX_URL` and `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` exist. Without them, routes show a setup message instead of rendering components that require the providers. Set both public variables at build time as well as in the hosting environment.
 
 1. Create or select a Clerk application.
 2. Add its publishable key as `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` and secret key as `CLERK_SECRET_KEY` in `.env.local` and the hosting environment.

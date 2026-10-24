@@ -20,7 +20,6 @@ export function PatientNav({ activeTab, onSelect, inert }: { activeTab: DemoTabI
     >
       {demoTabs.map((tab) => {
         const active = activeTab === tab.id;
-        const isVoice = tab.id === "voice";
         return (
           <button
             key={tab.id}
@@ -32,13 +31,7 @@ export function PatientNav({ activeTab, onSelect, inert }: { activeTab: DemoTabI
             onClick={() => onSelect(tab.id)}
             className={`pd-focus flex min-h-14 flex-col items-center justify-center gap-1 rounded-2xl px-1 text-[0.6875rem] leading-none transition-colors duration-200 ${active ? "font-semibold text-pd-accent-soft" : "font-medium text-pd-muted hover:text-pd-text"}`}
           >
-            {isVoice ? (
-              <span aria-hidden="true" className={`grid size-9 place-items-center rounded-full bg-gradient-to-br from-pd-accent to-pd-accent-2 text-white shadow-[0_6px_16px_-6px_rgba(119,116,255,0.8)] transition-transform duration-200 ${active ? "ring-2 ring-pd-accent-soft/60" : ""}`}>
-                <Icon name={tabIcons[tab.id]} size={20} strokeWidth={2} />
-              </span>
-            ) : (
-              <Icon name={tabIcons[tab.id]} size={22} strokeWidth={active ? 2.1 : 1.7} className={active ? "fill-pd-accent/25" : undefined} />
-            )}
+            <Icon name={tabIcons[tab.id]} size={22} strokeWidth={active ? 2.1 : 1.7} className={active ? "fill-pd-accent/25" : undefined} />
             {tabLabels[tab.id]}
           </button>
         );

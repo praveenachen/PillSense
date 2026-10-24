@@ -2,10 +2,12 @@
 
 import { usePathname } from "next/navigation";
 import Link from "next/link";
+import { Suspense } from "react";
 import { ArduinoStatusPanel } from "./arduino-status-panel";
 import { MockDispensingPanel } from "./mock-dispensing-panel";
 import { VisionObservationPanel } from "./vision-observation-panel";
 import { BrandMark, Icon } from "./mobile-ui";
+import { VoiceDeveloperPanel } from "./voice-developer-panel";
 
 /**
  * The real BLE panel stays mounted at the application root so its single transport,
@@ -41,6 +43,10 @@ export function PersistentArduinoLab({ authUiConfigured }: { authUiConfigured: b
               <section className="rounded-pd-card bg-[#eef4f8] p-4 sm:p-5">
                 <h2 className="mb-4 text-lg font-semibold">Camera observation · developer panel</h2>
                 {authUiConfigured ? <VisionObservationPanel /> : <LabConfigurationRequired />}
+              </section>
+              <section className="rounded-pd-card bg-[#eef4f8] p-4 sm:p-5">
+                <h2 className="mb-4 text-lg font-semibold">Voice demo · synthetic controls</h2>
+                {authUiConfigured ? <Suspense fallback={<p className="text-sm text-[#64748b]">Loading voice controls…</p>}><VoiceDeveloperPanel /></Suspense> : <LabConfigurationRequired />}
               </section>
             </>
           )}

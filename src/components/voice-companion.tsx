@@ -4,7 +4,7 @@ import { useConvexAuth, useMutation, useQuery } from "convex/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Id } from "../../convex/_generated/dataModel";
 import { api } from "../../convex/_generated/api";
-import { VoiceView } from "./voice-view";
+import { VoiceView, type VoiceMessage } from "./voice-view";
 import { parseConfirmation, parseVoiceIntent } from "@/lib/voice/intents";
 import { canCommitVoiceAction, canProcessRecording, MICROPHONE_UNAVAILABLE_MESSAGE, TRANSCRIPTION_UNAVAILABLE_MESSAGE } from "@/lib/voice/session-safety";
 
@@ -19,29 +19,29 @@ function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : "Voice interaction failed. Touch controls remain available.";
 }
 
-export function VoiceCompanion({ onOpenDispenser }: { onOpenDispenser?: () => void } = {}) {
+export function VoiceCompanion() {
   const auth = useConvexAuth();
   if (auth.isLoading || !auth.isAuthenticated) return null;
-  return <AuthenticatedVoiceCompanion onOpenDispenser={onOpenDispenser} />;
+  return <AuthenticatedVoiceCompanion />;
 }
 
-function AuthenticatedVoiceCompanion({ onOpenDispenser }: { onOpenDispenser?: () => void }) {
+function AuthenticatedVoiceCompanion() {
   const [now, setNow] = useState(() => Date.now());
   const doses = useQuery(api.occurrences.listForPatient, { now });
   const reportIngestion = useMutation(api.dispensing.reportIngestion);
   const reportDeviceIssue = useMutation(api.deviceIssues.report);
-  const createDemoDue = useMutation(api.occurrences.createDemoDue);
   const [phase, setPhase] = useState<Phase>("IDLE");
   const [connection, setConnection] = useState<"CHECKING" | "READY" | "TEXT_ONLY">("CHECKING");
-  const [caption, setCaption] = useState("Select Play reminder or Push to Talk. Every spoken message appears here.");
+  const [caption, setCaption] = useState("");
   const [transcript, setTranscript] = useState("");
+  const [conversation, setConversation] = useState<VoiceMessage[]>([]);
   const [textInput, setTextInput] = useState("");
   const [pending, setPending] = useState<PendingAction | null>(null);
   const [selectionReport, setSelectionReport] = useState<"TAKEN" | "NOT_TAKEN" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
-  const [demoOccurrenceId, setDemoOccurrenceId] = useState<Id<"doseOccurrences"> | null>(null);
-  const announcedDemoRef = useRef<Id<"doseOccurrences"> | null>(null);
+  const [nothingCaptured, setNothingCaptured] = useState(false);
+  const messageIdRef = useRef(0);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const audioUrlRef = useRef<string | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
@@ -51,15 +51,23 @@ function AuthenticatedVoiceCompanion({ onOpenDispenser }: { onOpenDispenser?: ()
   const cancelledRef = useRef(false);
   const requestRef = useRef<AbortController | null>(null);
 
+  const addMessage = useCallback((role: VoiceMessage["role"], text: string) => {
+    const cleaned = text.trim();
+    if (!cleaned) return;
+    messageIdRef.current += 1;
+    setConversation((current) => [...current, { id: messageIdRef.current, role, text: cleaned }].slice(-20));
+  }, []);
+
   const stopSpeaking = useCallback(() => {
     audioRef.current?.pause();
     if (audioRef.current) audioRef.current.currentTime = 0;
     setPhase((current) => current === "SPEAKING" ? "IDLE" : current);
   }, []);
 
-  const speak = useCallback(async (text: string) => {
+  const speak = useCallback(async (text: string, recordMessage = true) => {
     stopSpeaking();
     setCaption(text);
+    if (recordMessage) addMessage("assistant", text);
     setError(null);
     if (connection === "TEXT_ONLY") return;
     setPhase("PROCESSING");
@@ -82,7 +90,7 @@ function AuthenticatedVoiceCompanion({ onOpenDispenser }: { onOpenDispenser?: ()
       if ((caught as Error).name !== "AbortError") setError(errorMessage(caught));
       setPhase("IDLE");
     } finally { requestRef.current = null; }
-  }, [connection, stopSpeaking]);
+  }, [addMessage, connection, stopSpeaking]);
 
   useEffect(() => {
     void fetch("/api/voice/status", { cache: "no-store" }).then(async (response) => {
@@ -100,14 +108,6 @@ function AuthenticatedVoiceCompanion({ onOpenDispenser }: { onOpenDispenser?: ()
 
   const relevant = doses?.occurrences.filter((dose) => dose.ingestionReport === "UNREPORTED" && dose.scheduledFor <= now + 30 * 60_000) ?? [];
   const due = relevant.filter((dose) => now >= dose.eligibleFrom && now <= dose.expiresAt);
-
-  useEffect(() => {
-    if (!demoOccurrenceId || !doses) return;
-    const demo = doses.occurrences.find((dose) => dose.id === demoOccurrenceId);
-    if (!demo || announcedDemoRef.current === demoOccurrenceId) return;
-    announcedDemoRef.current = demoOccurrenceId;
-    void speak(`PillSense reminder. ${demo.medicationName} is ready for your supervised demonstration. Please say, I'm ready for my medication, or use a visible action below.`);
-  }, [demoOccurrenceId, doses, speak]);
 
   async function confirmPending() {
     if (!canCommitVoiceAction(Boolean(pending), true) || !pending) return;
@@ -128,7 +128,8 @@ function AuthenticatedVoiceCompanion({ onOpenDispenser }: { onOpenDispenser?: ()
   async function interpret(text: string) {
     const cleaned = text.trim();
     setTranscript(cleaned); setSuccess(null); setError(null);
-    if (!cleaned) { await speak("I did not hear a supported request. Please try again or use one of the visible choices."); return; }
+    if (cleaned) addMessage("user", cleaned);
+    if (!cleaned) { setNothingCaptured(true); return; }
     if (pending) {
       const confirmation = parseConfirmation(cleaned);
       if (confirmation === "CONFIRM") { await confirmPending(); return; }
@@ -162,7 +163,7 @@ function AuthenticatedVoiceCompanion({ onOpenDispenser }: { onOpenDispenser?: ()
       await speak("I understood that the dispenser has a problem. Say confirm, or use the Confirm button, to notify the caregiver. This will not retry the motor.");
       return;
     }
-    await speak(intent.type === "AMBIGUOUS" ? "I am not certain what you meant. Please repeat one clear action or choose a visible option." : "That request is not supported by the Voice Companion. Choose one of the three visible actions.");
+    await speak(intent.type === "AMBIGUOUS" ? "I am not certain what you meant. Please repeat one clear action or choose a visible option." : "That request is not supported by the Voice Companion. Choose one of the four visible actions.");
   }
 
   function endTracks() { streamRef.current?.getTracks().forEach((track) => track.stop()); streamRef.current = null; }
@@ -183,7 +184,7 @@ function AuthenticatedVoiceCompanion({ onOpenDispenser }: { onOpenDispenser?: ()
   }
 
   async function startListening() {
-    setError(null); setSuccess(null); stopSpeaking(); cancelledRef.current = false;
+    setError(null); setSuccess(null); setNothingCaptured(false); stopSpeaking(); cancelledRef.current = false;
     if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") { setError("Microphone recording is unavailable. Use the text and touch controls."); return; }
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -191,24 +192,30 @@ function AuthenticatedVoiceCompanion({ onOpenDispenser }: { onOpenDispenser?: ()
       const recorder = new MediaRecorder(stream, MediaRecorder.isTypeSupported("audio/webm;codecs=opus") ? { mimeType: "audio/webm;codecs=opus" } : undefined);
       recorderRef.current = recorder;
       recorder.ondataavailable = (event) => { if (event.data.size) chunksRef.current.push(event.data); };
-      recorder.onstop = () => { if (recordingTimerRef.current) window.clearTimeout(recordingTimerRef.current); endTracks(); const blob = new Blob(chunksRef.current, { type: recorder.mimeType || "audio/webm" }); if (canProcessRecording(cancelledRef.current, blob.size)) void transcribe(blob); };
+      recorder.onstop = () => { if (recordingTimerRef.current) window.clearTimeout(recordingTimerRef.current); endTracks(); const blob = new Blob(chunksRef.current, { type: recorder.mimeType || "audio/webm" }); if (canProcessRecording(cancelledRef.current, blob.size)) void transcribe(blob); else if (!cancelledRef.current) { setPhase("IDLE"); setNothingCaptured(true); } };
       recorder.start(); setPhase("LISTENING");
       recordingTimerRef.current = window.setTimeout(() => { if (recorder.state === "recording") recorder.stop(); }, MAX_RECORDING_MS);
-    } catch { endTracks(); setPhase("IDLE"); setError(MICROPHONE_UNAVAILABLE_MESSAGE); }
+    } catch (caught) {
+      endTracks(); setPhase("IDLE");
+      const name = caught instanceof DOMException ? caught.name : "";
+      setError(name === "NotAllowedError" || name === "SecurityError"
+        ? "The browser is blocking the microphone for this site. Click the lock icon in the address bar, set Microphone to Allow, then tap the orb again."
+        : name === "NotFoundError" || name === "OverconstrainedError"
+          ? "No microphone was found. Connect one, or use the text and touch controls."
+          : MICROPHONE_UNAVAILABLE_MESSAGE);
+    }
   }
 
   function stopListening() { if (recorderRef.current?.state === "recording") recorderRef.current.stop(); }
-  function cancelAll() { cancelledRef.current = true; requestRef.current?.abort(); if (recorderRef.current?.state === "recording") recorderRef.current.stop(); endTracks(); stopSpeaking(); setPending(null); setSelectionReport(null); setPhase("IDLE"); setCaption("Cancelled. No information was changed."); }
-
-  async function startDemo() {
-    setError(null);
-    try {
-      const id = await createDemoDue({});
-      setNow(Date.now());
-      setDemoOccurrenceId(id);
-    } catch (caught) {
-      setError(errorMessage(caught));
-    }
+  function cancelAll() {
+    cancelledRef.current = true;
+    requestRef.current?.abort();
+    if (recorderRef.current?.state === "recording") recorderRef.current.stop();
+    endTracks();
+    stopSpeaking();
+    setPending(null);
+    setSelectionReport(null);
+    setPhase("IDLE");
   }
 
   function chooseDose(id: string) {
@@ -225,13 +232,17 @@ function AuthenticatedVoiceCompanion({ onOpenDispenser }: { onOpenDispenser?: ()
       connection={connection}
       caption={caption}
       transcript={transcript}
+      conversation={conversation}
+      medicationName={due[0]?.medicationName ?? relevant[0]?.medicationName}
       textInput={textInput}
       pending={pending}
       doseChoices={selectionReport && relevant.length > 1 ? relevant : null}
       success={success}
       error={error}
+      nothingCaptured={nothingCaptured}
+      onDismissNothing={() => setNothingCaptured(false)}
       onToggleListening={phase === "LISTENING" ? stopListening : startListening}
-      onReplay={() => void speak(caption)}
+      onReplay={() => void speak(caption, false)}
       onStopSpeaking={stopSpeaking}
       onCancelAll={cancelAll}
       onSuggest={(phrase) => void interpret(phrase)}
@@ -240,9 +251,6 @@ function AuthenticatedVoiceCompanion({ onOpenDispenser }: { onOpenDispenser?: ()
       onChooseDose={chooseDose}
       onConfirm={() => void confirmPending()}
       onCancelPending={() => { setPending(null); void speak("Cancelled. No information was changed."); }}
-      onStartDemo={() => void startDemo()}
-      onPlayReminder={() => { const dose = due[0]; void speak(dose ? `PillSense reminder. ${dose.medicationName} is due for the supervised demonstration in Slot ${dose.slot}.` : "No medication is currently due."); }}
-      onOpenDispenser={onOpenDispenser}
     />
   );
 }

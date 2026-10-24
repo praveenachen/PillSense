@@ -61,18 +61,20 @@ export const createDemoDue = mutation({
 });
 
 export const listForPatient = query({
-  args: { now: v.number() },
+  // `rangeStart`/`rangeEnd` let the Schedule tab page through weeks; other callers use the default window.
+  args: { now: v.number(), rangeStart: v.optional(v.number()), rangeEnd: v.optional(v.number()) },
   handler: async (ctx, args) => {
     const { patient } = await resolveDashboardPatient(ctx);
+    const customRange = args.rangeStart !== undefined && args.rangeEnd !== undefined;
     const occurrences = await ctx.db
       .query("doseOccurrences")
       .withIndex("by_patient_and_scheduledFor", (q) =>
         q
           .eq("patientId", patient._id)
-          .gte("scheduledFor", args.now - 24 * 60 * MINUTE)
-          .lte("scheduledFor", args.now + 7 * 24 * 60 * MINUTE),
+          .gte("scheduledFor", args.rangeStart ?? args.now - 24 * 60 * MINUTE)
+          .lte("scheduledFor", args.rangeEnd ?? args.now + 7 * 24 * 60 * MINUTE),
       )
-      .take(50);
+      .take(customRange ? 150 : 50);
     const runtime = await ctx.db
       .query("deviceRuntime")
       .withIndex("by_patient", (q) => q.eq("patientId", patient._id))

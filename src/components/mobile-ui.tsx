@@ -5,7 +5,7 @@ import type { ReactNode } from "react";
 export type IconName =
   | "home" | "cube" | "mic" | "calendar" | "people" | "bell" | "bluetooth" | "info"
   | "chart" | "check" | "chevron" | "back" | "gear" | "close" | "alert" | "pill"
-  | "chat" | "refresh" | "wave" | "arrow" | "link" | "clock" | "shield" | "user" | "camera" | "form";
+  | "chat" | "refresh" | "wave" | "arrow" | "link" | "clock" | "shield" | "user" | "camera" | "form" | "more" | "plus";
 
 export function Icon({ name, size = 22, strokeWidth = 1.8, className }: { name: IconName; size?: number; strokeWidth?: number; className?: string }) {
   const p = { width: size, height: size, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth, strokeLinecap: "round" as const, strokeLinejoin: "round" as const, className, "aria-hidden": true };
@@ -18,6 +18,8 @@ export function Icon({ name, size = 22, strokeWidth = 1.8, className }: { name: 
     case "user": return <svg {...p}><circle cx="12" cy="8.5" r="3.6" /><path d="M5 20c.6-3.8 3.4-6 7-6s6.4 2.200 7 6" /></svg>;
     case "camera": return <svg {...p}><path d="M4 8.5A1.500 1.500 0 0 1 5.500 7H8l1.200-2h5.600L16 7h2.500A1.500 1.500 0 0 1 20 8.500v9a1.500 1.500 0 0 1-1.500 1.500h-13A1.500 1.500 0 0 1 4 17.500v-9Z" /><circle cx="12" cy="13" r="3.400" /></svg>;
     case "form": return <svg {...p}><rect x="5" y="4.500" width="14" height="16" rx="2.500" /><path d="M9 4.500V3.500h6v1M9 11h6M9 15h4" /></svg>;
+    case "more": return <svg {...p}><circle cx="5" cy="12" r="1" fill="currentColor" stroke="none" /><circle cx="12" cy="12" r="1" fill="currentColor" stroke="none" /><circle cx="19" cy="12" r="1" fill="currentColor" stroke="none" /></svg>;
+    case "plus": return <svg {...p}><path d="M12 5v14M5 12h14" /></svg>;
     case "bell": return <svg {...p}><path d="M6 16.5V11a6 6 0 0 1 12 0v5.5l1.5 1.5h-15L6 16.5Z" /><path d="M10 20.5a2 2 0 0 0 4 0" /></svg>;
     case "bluetooth": return <svg {...p}><path d="m7 7.5 10 9-5 4.5V3l5 4.500-10 9" /></svg>;
     case "info": return <svg {...p}><circle cx="12" cy="12" r="8.5" /><path d="M12 11v5.2M12 7.8v.1" /></svg>;

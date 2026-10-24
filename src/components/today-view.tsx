@@ -35,7 +35,7 @@ export function TodayView({ greeting, name, now, device, nextDose, timeline, acc
   const allTaken = timeline.length > 0 && takenCount === timeline.length;
 
   return (
-    <div className="space-y-5 overflow-x-hidden">
+    <div className="space-y-5 overflow-x-clip">
       <header className="flex min-h-10 items-center justify-between">
         <div className="flex items-center gap-2">
           <BrandMark size={28} />

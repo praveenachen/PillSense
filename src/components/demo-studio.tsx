@@ -24,7 +24,6 @@ export function DemoStudio({ authUiConfigured }: { authUiConfigured: boolean }) 
     scrollAreaRef.current?.scrollTo({ top: 0, behavior: "smooth" });
   }, []);
   const closeSetup = useCallback(() => setSetupOpen(false), []);
-  const goToday = useCallback(() => selectTab("today"), [selectTab]);
   const goDispenser = useCallback(() => selectTab("dispenser"), [selectTab]);
   const goSchedule = useCallback(() => selectTab("schedule"), [selectTab]);
   const goVoice = useCallback(() => selectTab("voice"), [selectTab]);
@@ -35,7 +34,7 @@ export function DemoStudio({ authUiConfigured }: { authUiConfigured: boolean }) 
   const todayAccount = () => (
     <AccountMenu authUiConfigured={authUiConfigured} icon="user" dark />
   );
-  const isDarkPatientScreen = activeTab === "today" || activeTab === "dispenser";
+  const isDarkPatientScreen = activeTab === "today" || activeTab === "dispenser" || activeTab === "voice" || activeTab === "schedule";
 
   return (
     <main className="min-h-screen overflow-hidden bg-[radial-gradient(120%_90%_at_20%_0%,#14405a_0%,#0b2233_55%,#08141f_100%)] text-[#0f172a]">
@@ -72,7 +71,7 @@ export function DemoStudio({ authUiConfigured }: { authUiConfigured: boolean }) 
         <section aria-label="PillSense mobile web preview" className={`${isDarkPatientScreen ? "pd-canvas" : "ps-canvas"} relative mx-auto flex h-[min(858px,calc(100dvh-2rem))] min-h-[620px] w-[min(404px,calc(100vw-1.5rem))] flex-col overflow-hidden rounded-[2.8rem] border-[7px] border-[#0f1b26] shadow-[0_30px_90px_rgba(0,0,0,0.55)]`}>
           <div aria-hidden="true" className="absolute left-1/2 top-2 z-30 h-6 w-28 -translate-x-1/2 rounded-full bg-[#0f1b26]" />
 
-          <section ref={scrollAreaRef} inert={setupOpen} className={`demo-mobile-scroll min-h-0 flex-1 overflow-y-auto overscroll-contain ${isDarkPatientScreen ? "px-5" : "px-4"} pb-10 pt-11`}>
+          <section ref={scrollAreaRef} inert={setupOpen} className={`demo-mobile-scroll min-h-0 flex-1 overflow-y-auto overscroll-contain [&>#demo-panel-voice]:min-h-full [&>#demo-panel-voice.block]:flex [&>#demo-panel-voice.block]:flex-col ${isDarkPatientScreen ? "px-5" : "px-4"} pb-10 pt-11`}>
             {panels.map((panel) => (
               <div
                 key={panel.id}
@@ -94,16 +93,10 @@ export function DemoStudio({ authUiConfigured }: { authUiConfigured: boolean }) 
                     : <ConfigurationRequired />
                 )}
                 {panel.id === "voice" && (
-                  <div>
-                    <ScreenHeader title="Voice Companion" subtitle="Speak, read, or tap" onBack={goToday} right={account()} />
-                    {authUiConfigured ? <VoiceCompanion onOpenDispenser={goDispenser} /> : <ConfigurationRequired />}
-                  </div>
+                  authUiConfigured ? <VoiceCompanion /> : <ConfigurationRequired />
                 )}
                 {panel.id === "schedule" && (
-                  <div>
-                    <ScreenHeader title="Schedule" subtitle="Persisted doses and reminders" onBack={goToday} right={account()} />
-                    {authUiConfigured ? <ScheduleScreen /> : <ConfigurationRequired />}
-                  </div>
+                  authUiConfigured ? <ScheduleScreen /> : <ConfigurationRequired dark />
                 )}
                 {panel.id === "care" && (
                   <div>
@@ -147,11 +140,11 @@ function AccountMenu({ authUiConfigured, icon, dark }: { authUiConfigured: boole
   );
 }
 
-function ConfigurationRequired(): ReactNode {
+function ConfigurationRequired({ dark = false }: { dark?: boolean } = {}): ReactNode {
   return (
-    <section className="ps-card border-amber-200 bg-amber-50 p-5">
-      <h2 className="ps-display text-lg font-semibold text-[#0f172a]">Authentication setup required</h2>
-      <p className="mt-2 text-sm leading-6 text-amber-900">
+    <section className={dark ? "pd-card p-5" : "ps-card border-amber-200 bg-amber-50 p-5"}>
+      <h2 className={dark ? "text-lg font-semibold text-pd-text" : "ps-display text-lg font-semibold text-[#0f172a]"}>Authentication setup required</h2>
+      <p className={`mt-2 text-sm leading-6 ${dark ? "text-pd-muted" : "text-amber-900"}`}>
         Add the documented Clerk and Convex public environment configuration to enable private app data.
       </p>
     </section>

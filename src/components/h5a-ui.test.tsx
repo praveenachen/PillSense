@@ -7,6 +7,7 @@ import { DispenserView, dispenserSetup, presentDispenserDevice } from "./dispens
 import { SlotMedicationForm } from "./slot-medication-form";
 import { RefillAlertCard, RefillBellView, dueRefills } from "./refill-bell";
 import { TodayView } from "./today-view";
+import { doseDisplayState, dosesForRange, reportedTakenProgress, uniqueOccurrences, type ScheduleDose } from "../lib/schedule";
 import { VoiceView, type VoiceViewProps } from "./voice-view";
 import type { TimelineRow } from "@/lib/today";
 
@@ -144,40 +145,130 @@ describe("H5A Today view", () => {
   });
 });
 
-const noop = () => undefined;
-const voiceProps = (overrides: Partial<VoiceViewProps> = {}): VoiceViewProps => ({
-  phase: "IDLE", connection: "READY", caption: "Hello", transcript: "", textInput: "", pending: null, doseChoices: null,
-  success: null, error: null, onToggleListening: noop, onReplay: noop, onStopSpeaking: noop, onCancelAll: noop,
-  onSuggest: noop, onTextInput: noop, onSubmitText: noop, onChooseDose: noop, onConfirm: noop, onCancelPending: noop,
-  onStartDemo: noop, onPlayReminder: noop, ...overrides,
+describe("Schedule dark revamp", () => {
+  const now = new Date(2026, 2, 12, 10, 0).getTime();
+  const dose = (partial: Partial<ScheduleDose> = {}): ScheduleDose => ({
+    id: "dose-1", medicationName: "Vitamin D", instructions: "Take 1 tablet with water", slot: 3,
+    scheduledFor: new Date(2026, 2, 12, 9, 0).getTime(), expiresAt: new Date(2026, 2, 12, 10, 30).getTime(),
+    attemptStatus: "NONE", ingestionReport: "UNREPORTED", ...partial,
+  });
+
+  it("derives dose states only from persisted reports and schedule windows", () => {
+    expect(doseDisplayState(dose({ ingestionReport: "TAKEN" }), now)).toBe("TAKEN");
+    expect(doseDisplayState(dose({ ingestionReport: "NOT_TAKEN" }), now)).toBe("NOT_TAKEN");
+    expect(doseDisplayState(dose({ expiresAt: now - 1 }), now)).toBe("UNRESOLVED");
+    expect(doseDisplayState(dose(), now)).toBe("DUE");
+    expect(doseDisplayState(dose({ scheduledFor: now + 60_000 }), now)).toBe("UPCOMING");
+  });
+
+  it("deduplicates only matching occurrence identities and keeps distinct medications", () => {
+    const rows = uniqueOccurrences([
+      dose(),
+      dose({ id: "dose-1", instructions: "Updated persisted row" }),
+      dose({ id: "dose-2", medicationName: "Vitamin D" }),
+    ]);
+    expect(rows).toHaveLength(2);
+    expect(rows[0].instructions).toBe("Updated persisted row");
+  });
+
+  it("uses local calendar boundaries for Today and the next seven days", () => {
+    const tomorrow = new Date(2026, 2, 13, 9, 0).getTime();
+    const eighthDay = new Date(2026, 2, 19, 9, 0).getTime();
+    const rows = [dose(), dose({ id: "dose-2", scheduledFor: tomorrow }), dose({ id: "dose-3", scheduledFor: eighthDay })];
+    expect(dosesForRange(rows, now, "today").map((item) => item.id)).toEqual(["dose-1"]);
+    expect(dosesForRange(rows, now, "week").map((item) => item.id)).toEqual(["dose-1", "dose-2"]);
+  });
+
+  it("counts progress from explicit taken reports only", () => {
+    expect(reportedTakenProgress([dose({ ingestionReport: "TAKEN" }), dose({ id: "dose-2", attemptStatus: "COMPLETED" }), dose({ id: "dose-3", ingestionReport: "NOT_TAKEN" })])).toEqual({ taken: 1, total: 3, percent: 33 });
+  });
+
+  it("implements the dark today-first hierarchy without developer or motor claims", () => {
+    const view = source("schedule-screen.tsx");
+    for (const label of ["Schedule", "Today", "This Week", "Today’s timeline", "Today’s progress", "reported taken", "View full schedule", "Recent activity"]) expect(view).toContain(label);
+    expect(view).toContain("Open authorized medication setup");
+    expect(view).toContain("pd-surface");
+    expect(view).not.toMatch(/Persisted doses and reminders|· demo|motor completed|clinically verified/i);
+  });
 });
 
-describe("H5A voice view", () => {
-  it("offers only the supported intent phrases and never a motor command", () => {
-    const html = renderToStaticMarkup(<VoiceView {...voiceProps()} />);
-    for (const phrase of ["ready for my medication", "I took my medication", "haven’t taken my medication yet", "dispenser isn’t working"]) expect(html).toContain(phrase);
-    expect(html).toContain("Voice cannot dispense");
-    expect(html).not.toMatch(/Run Slot|motor test|Remind me in/i);
+const noop = () => undefined;
+const voiceProps = (overrides: Partial<VoiceViewProps> = {}): VoiceViewProps => ({
+  phase: "IDLE", connection: "READY", caption: "", transcript: "", conversation: [], textInput: "", pending: null, doseChoices: null,
+  success: null, error: null, nothingCaptured: false, onDismissNothing: noop, onToggleListening: noop, onReplay: noop, onStopSpeaking: noop, onCancelAll: noop,
+  onSuggest: noop, onTextInput: noop, onSubmitText: noop, onChooseDose: noop, onConfirm: noop, onCancelPending: noop,
+  ...overrides,
+});
+
+describe("Voice Companion dark redesign", () => {
+  it("offers only bounded supported actions and uses real medication context", () => {
+    const html = renderToStaticMarkup(<VoiceView {...voiceProps({ medicationName: "Vitamin D" })} />);
+    for (const phrase of ["ready for Vitamin D", "I took Vitamin D", "haven’t taken Vitamin D yet", "dispenser isn’t working"]) expect(html).toContain(phrase);
+    expect(html).not.toMatch(/Run Slot|motor test|MOVE,|Tell me about|medical advice/i);
   });
 
-  it("disables the orb in text-only mode and explains why", () => {
+  it("disables the orb in text-only mode and exposes the typed fallback", () => {
     const html = renderToStaticMarkup(<VoiceView {...voiceProps({ connection: "TEXT_ONLY" })} />);
-    expect(html).toMatch(/<button[^>]*disabled[^>]*aria-label="Push to talk|<button[^>]*aria-label="Push to talk[^>]*disabled/);
+    expect(html).toMatch(/<button[^>]*disabled[^>]*aria-label="Start push-to-talk|<button[^>]*aria-label="Start push-to-talk[^>]*disabled/);
     expect(html).toContain("Voice unavailable");
+    expect(html).toContain("Type instead");
   });
 
-  it("only animates the waveform while listening or speaking, and never fakes a transcript", () => {
+  it("maps actual phases to the orb and only shows End during an active interaction", () => {
     const idle = renderToStaticMarkup(<VoiceView {...voiceProps()} />);
     const listening = renderToStaticMarkup(<VoiceView {...voiceProps({ phase: "LISTENING" })} />);
-    expect(idle).not.toContain("ps-bar-live");
-    expect(listening).toContain("ps-bar-live");
-    expect(listening).toContain("No transcript yet.");
+    const processing = renderToStaticMarkup(<VoiceView {...voiceProps({ phase: "PROCESSING" })} />);
+    const speaking = renderToStaticMarkup(<VoiceView {...voiceProps({ phase: "SPEAKING" })} />);
+    expect(idle).toContain('data-voice-state="idle"');
+    expect(idle).not.toContain(">End<");
+    expect(idle).not.toContain("No transcript yet.");
+    expect(idle).toContain("I’m listening.");
+    expect(idle).toContain("Tell me what you need, or just talk naturally.");
+    expect(idle).not.toContain("Tap the orb");
+    expect(idle).not.toContain("Press once");
+    expect(idle).not.toContain("Try saying");
+    expect(listening).toContain("I’m listening.");
+    expect(listening).toContain('aria-label="End"');
+    expect(processing).toContain("Thinking...");
+    expect(speaking).toContain("PillSense is speaking.");
+  });
+
+  it("renders only real conversation entries with contextual playback controls", () => {
+    const html = renderToStaticMarkup(<VoiceView {...voiceProps({
+      caption: "Your medication is due.", transcript: "I’m ready", phase: "SPEAKING",
+      conversation: [{ id: 1, role: "user", text: "I’m ready" }, { id: 2, role: "assistant", text: "Your medication is due." }],
+    })} />);
+    expect(html).toContain("Conversation");
+    expect(html).toContain("I’m ready");
+    expect(html).toContain("Your medication is due.");
+    expect(html).not.toContain("Replay");
+    expect(html).toContain("Stop speaking");
+  });
+
+  it("switches to a chat-only view with a record button after the first exchange", () => {
+    const first = renderToStaticMarkup(<VoiceView {...voiceProps()} />);
+    expect(first).toContain("Suggested requests");
+    expect(first).toContain("data-voice-state");
+    const chat = renderToStaticMarkup(<VoiceView {...voiceProps({ conversation: [{ id: 1, role: "user", text: "I took my medication" }, { id: 2, role: "assistant", text: "Recorded." }] })} />);
+    expect(chat).not.toContain("Suggested requests");
+    expect(chat).not.toContain("data-voice-state");
+    expect(chat).not.toContain("I’m listening.");
+    expect(chat).toContain('aria-label="Record a message"');
+    expect(chat).toContain("I took my medication");
   });
 
   it("shows explicit confirmation controls before a pending report is saved", () => {
     const html = renderToStaticMarkup(<VoiceView {...voiceProps({ pending: { kind: "REPORT", medicationName: "Metformin", report: "TAKEN" } })} />);
     expect(html).toContain("No action has been saved yet.");
     expect(html).toContain("Confirm");
+  });
+
+  it("keeps synthetic voice demo controls in Hardware Lab, not the patient view", () => {
+    const view = source("voice-view.tsx");
+    const lab = source("persistent-arduino-lab.tsx");
+    expect(view).not.toMatch(/Voice demo|synthetic record|Start 60-second|supervised mock dispensing/i);
+    expect(lab).toContain("Voice demo · synthetic controls");
+    expect(lab).toContain("<VoiceDeveloperPanel");
   });
 });
 

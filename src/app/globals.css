@@ -278,7 +278,129 @@ body {
 .pd-breathe { animation: pd-breathe 5s ease-in-out infinite; }
 .pd-wave { animation: pd-wave 16s linear infinite; }
 
+/* Voice Companion: a fluid, glowing aura sphere. All motion is decorative and driven by app
+   state (idle / listening / processing / speaking); it does not meter the microphone. */
+.pd-voice-aura {
+  position: absolute;
+  width: 20rem;
+  height: 20rem;
+  border-radius: 9999px;
+  background:
+    radial-gradient(circle at 35% 40%, rgb(124 92 255 / 0.5) 0%, transparent 58%),
+    radial-gradient(circle at 68% 60%, rgb(56 130 255 / 0.4) 0%, transparent 60%);
+  filter: blur(34px);
+  opacity: 0.8;
+  animation: pd-voice-aura 9s ease-in-out infinite;
+}
+.pd-voice-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  mask-image: linear-gradient(90deg, transparent, black 12%, black 88%, transparent);
+}
+.pd-voice-hit { background: transparent; border: 0; padding: 0; z-index: 1; }
+.pd-voice-hit:disabled { opacity: 1; }
+.pd-voice-ribbons {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 150%;
+  height: 11rem;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  mask-image: linear-gradient(90deg, transparent, black 22%, black 78%, transparent);
+}
+.pd-voice-ribbon {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  fill: none;
+  stroke-linecap: round;
+  overflow: visible;
+}
+.pd-voice-ribbon path { vector-effect: non-scaling-stroke; }
+.pd-voice-ribbon--a { stroke: rgb(168 120 255 / 0.85); stroke-width: 2.5px; filter: blur(1.2px) drop-shadow(0 0 8px rgb(168 120 255 / 0.9)); animation: pd-voice-flow-a 11s ease-in-out infinite; }
+.pd-voice-ribbon--b { stroke: rgb(90 150 255 / 0.8); stroke-width: 2px; filter: blur(1.5px) drop-shadow(0 0 8px rgb(90 150 255 / 0.9)); animation: pd-voice-flow-b 14s ease-in-out infinite; }
+.pd-voice-ribbon--c { stroke: rgb(214 140 255 / 0.55); stroke-width: 1.5px; filter: blur(2px); animation: pd-voice-flow-a 17s ease-in-out infinite reverse; }
+.pd-voice-orb {
+  isolation: isolate;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  animation: pd-voice-morph 14s ease-in-out infinite, pd-voice-float 7s ease-in-out infinite;
+  border-radius: 58% 42% 54% 46% / 48% 56% 44% 52%;
+  filter: drop-shadow(0 0 28px rgb(119 116 255 / 0.55));
+  transition: filter 300ms ease, transform 300ms ease;
+}
+.pd-voice-orb-body, .pd-voice-orb-swirl, .pd-voice-orb-shine {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+}
+.pd-voice-orb-body {
+  background:
+    radial-gradient(circle at 30% 24%, rgb(210 225 255 / 0.55) 0%, transparent 22%),
+    radial-gradient(circle at 70% 78%, rgb(56 168 255 / 0.75) 0%, transparent 50%),
+    radial-gradient(circle at 24% 72%, rgb(176 96 255 / 0.65) 0%, transparent 52%),
+    radial-gradient(circle at 50% 50%, #1a1f66 0%, #0a0d33 74%);
+  box-shadow: inset 0 0 0 1.5px rgb(190 205 255 / 0.55), inset 0 0 26px rgb(120 160 255 / 0.55), inset -16px -20px 34px rgb(2 4 24 / 0.6), inset 10px 10px 22px rgb(255 255 255 / 0.14);
+}
+.pd-voice-orb-swirl {
+  inset: 6%;
+  background: conic-gradient(from 0deg, transparent 0deg, rgb(120 190 255 / 0.55) 70deg, transparent 150deg, rgb(190 120 255 / 0.5) 240deg, transparent 320deg);
+  filter: blur(9px);
+  mix-blend-mode: screen;
+  animation: pd-voice-spin 12s linear infinite;
+}
+.pd-voice-orb-shine {
+  inset: 3%;
+  background: linear-gradient(135deg, rgb(255 255 255 / 0.35) 0%, transparent 28%, transparent 70%, rgb(130 200 255 / 0.3) 100%);
+  mask-image: radial-gradient(circle, transparent 62%, black 82%);
+}
+@keyframes pd-voice-morph {
+  0%, 100% { border-radius: 58% 42% 54% 46% / 48% 56% 44% 52%; }
+  33% { border-radius: 46% 54% 42% 58% / 56% 44% 56% 44%; }
+  66% { border-radius: 52% 48% 60% 40% / 42% 58% 42% 58%; }
+}
+@keyframes pd-voice-float {
+  0%, 100% { transform: translateY(0) scale(1); }
+  50% { transform: translateY(-5px) scale(1.025); }
+}
+@keyframes pd-voice-spin { to { transform: rotate(360deg); } }
+@keyframes pd-voice-aura {
+  0%, 100% { transform: scale(1) rotate(0deg); opacity: 0.7; }
+  50% { transform: scale(1.12) rotate(25deg); opacity: 0.95; }
+}
+@keyframes pd-voice-flow-a {
+  0%, 100% { transform: translateX(-4%) scaleY(1); }
+  50% { transform: translateX(4%) scaleY(1.35); }
+}
+@keyframes pd-voice-flow-b {
+  0%, 100% { transform: translateX(5%) scaleY(1.2); }
+  50% { transform: translateX(-5%) scaleY(0.8); }
+}
+@keyframes pd-voice-pulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.07); }
+}
+.pd-voice-orb--listening { animation: pd-voice-morph 6s ease-in-out infinite, pd-voice-pulse 1.6s ease-in-out infinite; filter: drop-shadow(0 0 44px rgb(150 120 255 / 0.9)); }
+.pd-voice-orb--listening .pd-voice-orb-swirl { animation-duration: 5s; }
+.pd-voice-orb--processing { animation: pd-voice-morph 4s ease-in-out infinite, pd-voice-float 2.4s ease-in-out infinite; }
+.pd-voice-orb--processing .pd-voice-orb-swirl { animation-duration: 2.2s; }
+.pd-voice-orb--speaking { animation: pd-voice-morph 5s ease-in-out infinite, pd-voice-pulse 0.9s ease-in-out infinite; filter: drop-shadow(0 0 44px rgb(84 150 255 / 0.9)); }
+.pd-voice-orb--speaking .pd-voice-orb-swirl { animation-duration: 4s; }
+.pd-voice-orb--error { animation: none; filter: saturate(0.6) drop-shadow(0 0 24px rgb(248 113 113 / 0.5)); }
+.pd-voice-orb:disabled { opacity: 0.7; }
+.pd-voice-ribbons--listening .pd-voice-ribbon--a, .pd-voice-ribbons--speaking .pd-voice-ribbon--a { animation-duration: 3.5s; }
+.pd-voice-ribbons--listening .pd-voice-ribbon--b, .pd-voice-ribbons--speaking .pd-voice-ribbon--b { animation-duration: 4.5s; }
+.pd-voice-ribbons--error { opacity: 0.2; }
+
 @media (prefers-reduced-motion: reduce) {
-  .pd-breathe, .pd-wave, .pd-canvas::before, .pd-canvas::after { animation: none; }
+  .pd-breathe, .pd-wave, .pd-canvas::before, .pd-canvas::after,
+  .pd-voice-orb, .pd-voice-orb-swirl, .pd-voice-aura, .pd-voice-ribbon { animation: none !important; }
   .pd-press { transition: none; }
 }

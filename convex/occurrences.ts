@@ -69,7 +69,7 @@ export const listForPatient = query({
       .withIndex("by_patient_and_scheduledFor", (q) =>
         q
           .eq("patientId", patient._id)
-          .gte("scheduledFor", args.now - 12 * 60 * MINUTE)
+          .gte("scheduledFor", args.now - 24 * 60 * MINUTE)
           .lte("scheduledFor", args.now + 7 * 24 * 60 * MINUTE),
       )
       .take(50);

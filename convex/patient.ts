@@ -63,6 +63,7 @@ export const dashboard = query({
     return {
       status: "ready" as const,
       patientName: patient.displayName,
+      isSynthetic: patient.isSynthetic,
       medications: rows
         .filter((row) => row !== null)
         .sort((a, b) =>

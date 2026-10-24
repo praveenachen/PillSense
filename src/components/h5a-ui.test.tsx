@@ -3,6 +3,9 @@ import { join } from "node:path";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { CarouselGraphic } from "./mobile-ui";
+import { DispenserView, dispenserSetup, presentDispenserDevice } from "./dispenser-view";
+import { SlotMedicationForm } from "./slot-medication-form";
+import { RefillAlertCard, RefillBellView, dueRefills } from "./refill-bell";
 import { TodayView } from "./today-view";
 import { VoiceView, type VoiceViewProps } from "./voice-view";
 import type { TimelineRow } from "@/lib/today";
@@ -11,45 +14,133 @@ const source = (file: string) => readFileSync(join(process.cwd(), "src", "compon
 
 const row = (partial: Partial<TimelineRow>): TimelineRow => ({
   key: "k", at: 0, timeLabel: "9:30 AM", medicationName: "Metformin", instructions: "With breakfast", slot: 1,
-  occurrenceId: null, isDemo: false, state: "NEXT", ...partial,
+  occurrenceId: null, isDemo: false, state: "UPCOMING", ...partial,
 });
 
-const device = { label: "Demo Dispenser", detail: "Ready", tone: "ready" as const };
+const device = { label: "Demo Dispenser", detail: "Ready", tone: "ready" as const, connected: true };
+
+describe("Today screen dark revamp", () => {
+  const now = new Date(2026, 2, 12, 8, 48).getTime();
+  const nine = new Date(2026, 2, 12, 9, 0).getTime();
+
+  it("shows a countdown only for a real upcoming dose and highlights that slot", () => {
+    const html = renderToStaticMarkup(<TodayView greeting="Good morning," name="Eleanor" now={now} device={device} nextDose={row({ at: nine, slot: 6 })} timeline={[row({ at: nine, slot: 6 })]} />);
+    expect(html).toContain("in 12 min");
+    expect(html).toContain("Thursday, Mar 12");
+    expect(html).toContain("Slot 6 is highlighted");
+    const none = renderToStaticMarkup(<TodayView greeting="Hi," name="" now={now} device={device} nextDose={null} timeline={[]} />);
+    expect(none).not.toMatch(/in \d+ min/);
+    expect(none).toContain("No compartment is scheduled next");
+  });
+
+  it("never claims a live motor position and never asks for the microphone", () => {
+    const html = renderToStaticMarkup(<TodayView greeting="Hi," name="" now={now} device={device} nextDose={row({ at: nine, slot: 6 })} timeline={[]} onOpenVoice={() => undefined} />);
+    expect(html).toContain("does not show live motor position");
+    expect(source("today-view.tsx")).not.toMatch(/getUserMedia|SpeechRecognition|onOpenVoice\(\)\s*;?\s*start/);
+  });
+
+  it("opens Voice from the AI panel and reports real connection state", () => {
+    const html = renderToStaticMarkup(<TodayView greeting="Hi," name="" now={now} device={{ label: "Demo Dispenser", detail: "Not connected", tone: "attention", connected: false }} nextDose={null} timeline={[]} onOpenVoice={() => undefined} />);
+    const connected = renderToStaticMarkup(<TodayView greeting="Hi," name="" now={now} device={{ label: "Demo Dispenser", detail: "Calibration required", tone: "attention", connected: true }} nextDose={null} timeline={[]} onOpenDispenser={() => undefined} />);
+    expect(html).toContain('aria-label="Open Voice Companion"');
+    expect(html).toContain("Disconnected");
+    expect(html).not.toContain(">Connected<");
+    expect(connected).toContain('aria-label="Connected, open My Dispenser"');
+    expect(connected).not.toContain("Calibration required");
+  });
+});
 
 describe("H5A Today view", () => {
+  const now = new Date(2026, 2, 12, 8, 48).getTime();
+
   it("renders the greeting, device card, next dose and timeline from props", () => {
     const html = renderToStaticMarkup(
-      <TodayView greeting="Good morning," name="Eleanor" summary="3 doses scheduled today." device={device}
+      <TodayView greeting="Good morning," name="Eleanor" now={0} device={device}
         nextDose={row({})} timeline={[row({ state: "TAKEN", key: "a", medicationName: "Vitamin D" }), row({ key: "b" })]} />,
     );
     expect(html).toContain("Good morning,");
     expect(html).toContain("Eleanor.");
     expect(html).toContain("Next medication");
-    expect(html).toContain("Demo Dispenser");
+    expect(html).toContain("Connected");
     expect(html).toContain("Slot 1");
     expect(html).toContain("With breakfast");
-    expect(html).toContain("Reported taken");
+    expect(html).toContain("Complete");
+    expect(html).not.toContain("Demo dose");
     const visibleText = html.replace(/<[^>]+>/g, " ");
     expect(visibleText).not.toMatch(/on track/i);
     expect(visibleText).not.toMatch(/\d+\s?%/);
     expect(visibleText).not.toMatch(/battery/i);
   });
 
-  it("disables Mark as taken, with an explanation, when no persisted dose record exists", () => {
+  it("keeps the compact upcoming card free of patient confirmation controls", () => {
     const html = renderToStaticMarkup(
-      <TodayView greeting="Hello," name="" summary="" device={device} nextDose={row({ occurrenceId: null })} timeline={[]}
-        markTaken={{ busy: false, error: null, onConfirm: () => undefined }} />,
+      <TodayView greeting="Hello," name="" now={0} device={device} nextDose={row({ occurrenceId: null })} timeline={[]}
+      />,
     );
-    expect(html).toMatch(/<button[^>]*disabled[^>]*>[\s\S]*Mark as taken/);
-    expect(html).toContain("A schedule time alone is not a record");
+    expect(html).not.toContain("Mark as taken");
+    expect(html).toContain("Slot 1");
   });
 
-  it("enables Mark as taken only when a persisted occurrence is available", () => {
+  it("does not expose patient confirmation controls for persisted occurrences", () => {
     const html = renderToStaticMarkup(
-      <TodayView greeting="Hello," name="" summary="" device={device} nextDose={row({ occurrenceId: "occ", state: "DUE" })} timeline={[]}
-        markTaken={{ busy: false, error: null, onConfirm: () => undefined }} />,
+      <TodayView greeting="Hello," name="" now={0} device={device} nextDose={row({ occurrenceId: "occ", state: "UPCOMING" })} timeline={[]}
+      />,
     );
-    expect(html).not.toMatch(/<button[^>]*disabled[^>]*>[\s\S]{0,200}Mark as taken/);
+    expect(html).not.toContain("Mark as taken");
+  });
+
+  it("prioritizes an overdue unreported occurrence without developer-facing labels", () => {
+    const html = renderToStaticMarkup(
+      <TodayView greeting="Hello," name="Eleanor" now={now} device={device}
+        nextDose={row({ occurrenceId: "occ", state: "UPCOMING", isDemo: true })} timeline={[]}
+      />,
+    );
+    expect(html).toContain("Next medication");
+    expect(html).not.toContain("Awaiting confirmation");
+    expect(html).not.toContain("Demo dose");
+  });
+
+  it("uses truthful empty and completed-day copy", () => {
+    const empty = renderToStaticMarkup(<TodayView greeting="Hi," name="" now={now} device={device} nextDose={null} timeline={[]} />);
+    const complete = renderToStaticMarkup(<TodayView greeting="Hi," name="" now={now} device={device} nextDose={null} timeline={[row({ state: "TAKEN" })]} />);
+    expect(empty).toContain("Nothing scheduled today.");
+    expect(empty).not.toContain("No more doses");
+    expect(complete).toContain("You’re all set for today.");
+  });
+
+  it("only notifies for refills 5 days or less away, soonest first", () => {
+    const due = dueRefills([
+      { id: "a", medicationName: "Vitamin D", estimatedDaysRemaining: 9 },
+      { id: "b", medicationName: "Iron", estimatedDaysRemaining: 5 },
+      { id: "c", medicationName: "Omega-3", estimatedDaysRemaining: 2 },
+      { id: "d", medicationName: "Unknown", estimatedDaysRemaining: null },
+    ]);
+    expect(due.map((item) => item.id)).toEqual(["c", "b"]);
+  });
+
+  it("shows a red count badge on the bell only when a refill is due", () => {
+    const refills = dueRefills([{ id: "b", medicationName: "Iron", estimatedDaysRemaining: 5 }]);
+    expect(renderToStaticMarkup(<RefillBellView refills={refills} />)).toContain("bg-red-500");
+    expect(renderToStaticMarkup(<RefillBellView refills={[]} />)).not.toContain("bg-red-500");
+  });
+
+  it("ignores refills that were already requested", () => {
+    expect(dueRefills([{ id: "a", medicationName: "Iron", estimatedDaysRemaining: 2, status: "REFILL_REQUESTED" }])).toEqual([]);
+  });
+
+  it("renders a warning-style refill alert with order and snooze actions", () => {
+    const refills = dueRefills([
+      { id: "b", medicationName: "Iron", estimatedDaysRemaining: 3, supplyCount: 3, runOutAt: Date.UTC(2026, 9, 28) },
+      { id: "c", medicationName: "Omega-3", estimatedDaysRemaining: 5 },
+    ]);
+    const html = renderToStaticMarkup(<RefillAlertCard refills={refills} />);
+    expect(html).toContain("Refill needed");
+    expect(html).toContain("Iron");
+    expect(html).toContain("Estimated 3 days left");
+    expect(html).toContain("Pills left");
+    expect(html).toContain("Order Refill");
+    expect(html).toContain("Remind me later");
+    expect(html).toContain("Also running low: Omega-3");
   });
 });
 
@@ -105,6 +196,78 @@ describe("carousel graphic", () => {
   });
 });
 
+describe("My Dispenser dark redesign", () => {
+  const medication = { id: "med-1", name: "Iron Supplement", instructions: "1 tablet · With water", slot: 6, localTime: "09:00" };
+  const ready = presentDispenserDevice({ state: "READY", connected: true, homeAligned: true, faultCode: null });
+
+  it("renders persisted assignment details and all eight selectable positions", () => {
+    const html = renderToStaticMarkup(<DispenserView medications={[medication]} device={ready} selectedSlot={6} onSelectSlot={noop} onOpenSetup={noop} synthetic />);
+    expect(html).toContain("My Dispenser");
+    expect(html).toContain("Iron Supplement");
+    expect(html).not.toContain("1 tablet");
+    expect(html).toContain("pills left");
+    expect(html).not.toContain("With water");
+    expect(html).not.toContain("HOME");
+    expect(html).not.toContain("not a live or sensor-verified position");
+    for (const slot of [1, 2, 3, 4, 5, 6, 7]) expect(html).toContain(`aria-label="Select slot ${slot}"`);
+  });
+
+  it("shows truthful home and empty-slot states without any patient motor action", () => {
+    const empty = renderToStaticMarkup(<DispenserView medications={[medication]} device={ready} selectedSlot={2} onSelectSlot={noop} onOpenSetup={noop} synthetic={false} />);
+    const home = renderToStaticMarkup(<DispenserView medications={[medication]} device={ready} selectedSlot={0} onSelectSlot={noop} onOpenSetup={noop} synthetic={false} />);
+    expect(empty).not.toContain("Empty compartment");
+    expect(home).toContain("Reserved position");
+    expect(home).toContain("manual home alignment");
+    for (const html of [empty, home]) expect(html).not.toMatch(/Rotate|MOVE,|Run Slot 6|motor test/i);
+  });
+
+  it("combines connection and readiness into one status", () => {
+    expect(dispenserSetup(presentDispenserDevice(null), 0).status).toEqual({ label: "Not Ready", tone: "offline" });
+    expect(dispenserSetup(presentDispenserDevice({ state: "CALIBRATION_REQUIRED", connected: true, homeAligned: false, faultCode: null }), 3).status.label).toBe("Not Ready");
+    expect(dispenserSetup(presentDispenserDevice({ state: "DISPENSING", connected: true, homeAligned: true, faultCode: null }), 3).status.label).toBe("Busy");
+    expect(dispenserSetup(ready, 3).status).toEqual({ label: "Ready", tone: "ready" });
+  });
+
+  it("marks only the first unfinished setup step as current, and all steps once ready", () => {
+    const offline = dispenserSetup(presentDispenserDevice(null), 2);
+    expect(offline.steps.map((step) => step.current)).toEqual([true, false, false]);
+    const unverified = dispenserSetup(presentDispenserDevice({ state: "CALIBRATION_REQUIRED", connected: true, homeAligned: false, faultCode: null }), 0);
+    expect(unverified.steps.map((step) => step.done)).toEqual([true, false, false]);
+    expect(unverified.steps.map((step) => step.current)).toEqual([false, true, false]);
+    const done = dispenserSetup(ready, 1);
+    expect(done.ready).toBe(true);
+    expect(done.steps.some((step) => step.current)).toBe(false);
+  });
+
+  it("locks later setup steps until the earlier ones are complete and lists every loaded slot", () => {
+    const offline = presentDispenserDevice(null);
+    const html = renderToStaticMarkup(<DispenserView medications={[medication]} device={offline} selectedSlot={6} onSelectSlot={noop} onOpenSetup={noop} />);
+    expect(html.match(/aria-disabled="true"/g)).toHaveLength(1);
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>[\s\S]*?Load slots/);
+    expect(html).toContain("Slots");
+    expect(html).toContain("Iron Supplement");
+    expect(html).toContain("Disconnected");
+  });
+
+  it("lists all seven slots in order and marks empty ones", () => {
+    const html = renderToStaticMarkup(<DispenserView medications={[medication]} device={ready} selectedSlot={6} onSelectSlot={noop} onOpenSetup={noop} />);
+    expect(html.match(/>Empty</g)).toHaveLength(6);
+    expect(html.match(/No medication/g)).toHaveLength(6);
+  });
+
+  it("starts the slot form on a choice between camera and manual entry", () => {
+    const html = renderToStaticMarkup(<SlotMedicationForm slot={2} onCancel={noop} />);
+    expect(html).toContain("Scan with camera");
+    expect(html).toContain("Manual entry");
+    expect(html).not.toContain("Dose per day");
+  });
+
+  it("renders the three setup steps and opens a form for an empty slot", () => {
+    const html = renderToStaticMarkup(<DispenserView medications={[medication]} device={ready} selectedSlot={2} onSelectSlot={noop} onOpenSetup={noop} synthetic={false} />);
+    for (const label of ["Pair device", "Verify status", "Load slots"]) expect(html).toContain(label);
+  });
+});
+
 describe("hardware safety boundaries survive the redesign", () => {
   const arduino = source("arduino-status-panel.tsx");
 
@@ -131,10 +294,32 @@ describe("hardware safety boundaries survive the redesign", () => {
     }
   });
 
-  it("keeps every demo tab mounted and mounts the hardware panel exactly once", () => {
+  it("keeps every patient tab mounted while moving the hardware panel to one internal lab owner", () => {
     const studio = source("demo-studio.tsx");
-    expect(studio.match(/<ArduinoStatusPanel/g)).toHaveLength(1);
+    const persistentLab = source("persistent-arduino-lab.tsx");
+    expect(studio).not.toContain("<ArduinoStatusPanel");
+    expect(studio).not.toContain("<MockDispensingPanel");
+    expect(persistentLab.match(/<ArduinoStatusPanel/g)).toHaveLength(1);
+    expect(persistentLab).toContain('usePathname() === "/hardware-lab"');
+    expect(persistentLab.match(/<MockDispensingPanel/g)).toHaveLength(1);
     expect(studio).toContain("getDemoPanelStates");
     expect(studio).not.toMatch(/activeTab === "dispenser" &&/);
+  });
+
+  it("keeps camera tooling out of the patient studio and inside the internal hardware lab", () => {
+    const studio = source("demo-studio.tsx");
+    const lab = source("persistent-arduino-lab.tsx");
+    expect(studio).not.toContain("<VisionObservationPanel");
+    expect(lab.match(/<VisionObservationPanel/g)).toHaveLength(1);
+    expect(lab).toContain("Developer / Hardware Lab");
+    expect(studio).toMatch(/panel\.id === "today"[\s\S]{0,400}<TodayScreen[\s\S]{0,200}: <ConfigurationRequired/);
+  });
+
+  it("keeps patient-facing dispenser code free of BLE and motor dispatch APIs", () => {
+    const screen = source("dispenser-screen.tsx");
+    const view = source("dispenser-view.tsx");
+    expect(`${screen}\n${view}`).not.toMatch(/WebBluetooth|navigator\.bluetooth|runSupervised|MOVE,/);
+    expect(view).toContain("Slots");
+    expect(view).not.toContain("View All Slots");
   });
 });

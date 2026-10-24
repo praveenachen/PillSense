@@ -39,16 +39,14 @@ Evidence-honest adherence support: motor completion never implies ingestion, onl
 
 Name: **PillSense**. Fetch.ai agent identity: "PillSense Care Coordinator" (`@pillsense-care-coordinator`).
 
-## Visual Authority (binding, confirmed by user)
+## Visual Authority
 
-- `docs/design/pillsense-ui-reference-v2.png` is the **binding visual specification** for the five primary mobile screens (Today, My Dispenser, Voice Companion, Caregiver, Setup & Slot Mapping) plus Schedule, which follows the same system.
-- The existing UI design system (sunset peach/orange gradient `.ps-canvas`, SF bridge scenic accent, current card/typography sizing) is **not authoritative**. It is evidence of what to replace.
-- This is a **reference-reproduction project**, not an open-ended redesign. Visual fidelity to the reference outranks preserving existing styling. Do not invent a new aesthetic.
-- Target feel: bright, airy, calm, premium consumer med-tech. White and light mist-blue surfaces, restrained seafoam, deep-teal CTAs, dark-navy type.
-- Non-negotiable regardless of look: existing functionality, accessibility, authorization (Clerk roles), and hardware safeguards (single MOVE per session, uppercase operation-ID correlation, uncertain-command reconciliation, safety confirmations, mounted-tab BLE behavior).
-- Where the reference's illustrative content (e.g. "50% adherence", "92% battery", "Eleanor", Slot 1 pill counts, a live waveform) conflicts with supported data or functionality, use real data and truthful labels or omit the element. Motor completion is never presented as ingestion.
-- The 3D dispenser model is deferred to H5B (CAD-derived); keep the current placeholder until then.
-- `DESIGN.md` for the replacement system is written **after** implementation, not by documenting the current UI.
+- `docs/design/CURRENT_DESIGN_DIRECTION.md` is the **single binding design specification** for visual styling, interaction, shared components, and screen-by-screen implementation.
+- The implemented dark Today experience is the current baseline. Its `pd-*` tokens, hardware-forward eight-position SVG, and shared patient navigation must be preserved while the remaining screens are migrated individually.
+- The application is intentionally transitional: Today is dark, while several other screens still use the older light H5A presentation. Those light screens are awaiting redesign and must not be used as authority or as a reason to revert Today.
+- Old H5A light/teal mockups, screenshots, and plans are historical records under `docs/design/archive/pre-dark-redesign/`.
+- Non-negotiable regardless of presentation: existing functionality, accessibility, authorization, privacy, evidence honesty, camera boundaries, and hardware safeguards such as single MOVE dispatch, operation-ID correlation, uncertain-command reconciliation, and safety confirmations.
+- Illustrative content must never invent adherence, battery, physical position, inventory, ingestion, or patient evidence. Motor completion and camera observations remain separate from patient-reported ingestion.
 
 ## Evidence on Hand
 

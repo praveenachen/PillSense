@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Fraunces, Geist, Geist_Mono } from "next/font/google";
 import { Providers } from "./providers";
+import { PersistentArduinoLab } from "@/components/persistent-arduino-lab";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -28,13 +29,20 @@ export const metadata: Metadata = {
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
+  const authUiConfigured = Boolean(
+    process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY &&
+      process.env.NEXT_PUBLIC_CONVEX_URL,
+  );
   return (
     <html
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} ${fraunces.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col">
-        <Providers>{children}</Providers>
+        <Providers>
+          {children}
+          <PersistentArduinoLab authUiConfigured={authUiConfigured} />
+        </Providers>
       </body>
     </html>
   );

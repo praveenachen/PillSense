@@ -5,6 +5,7 @@ import { useState } from "react";
 import type { FormEvent } from "react";
 import { api } from "../../convex/_generated/api";
 import { AuthRequired } from "./auth-required";
+import { INSTRUCTION_OPTIONS } from "../../convex/lib/instructionOptions";
 import { getAvailableSlots } from "@/lib/slots";
 
 const weekdays = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"] as const;
@@ -145,8 +146,10 @@ function AuthenticatedMedicationSetup() {
               <option value="0">Empty</option>
             </select>
           </Field>
-          <Field label="Instructions (non-clinical demo text)" htmlFor="instructions" wide>
-            <textarea id="instructions" name="instructions" maxLength={500} rows={3} placeholder="Demo instructions only — do not enter medical advice." className="input resize-y" />
+          <Field label="Instructions" htmlFor="instructions" wide>
+            <select id="instructions" name="instructions" defaultValue={INSTRUCTION_OPTIONS[0]} className="input">
+              {INSTRUCTION_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}
+            </select>
           </Field>
         </div>
 

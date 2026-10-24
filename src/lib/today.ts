@@ -29,11 +29,8 @@ export type DoseOccurrence = {
 
 export type TimelineState =
   | "TAKEN" // patient reported taken
-  | "NOT_TAKEN" // patient reported not taken
-  | "DUE" // inside the persisted due window, no patient report
-  | "NEXT" // first upcoming dose
-  | "UPCOMING"
-  | "NO_REPORT"; // time passed with no patient report; NOT a claim that it was missed
+  | "NEEDS_CONFIRMATION" // scheduled time has passed without a "taken" report; NOT a claim that it was missed
+  | "UPCOMING"; // scheduled time is still in the future
 
 export type TimelineRow = {
   key: string;
@@ -119,23 +116,18 @@ export function buildTodayTimeline(
   }
 
   draft.sort((a, b) => a.at - b.at);
-  let nextAssigned = false;
   return draft.map(({ occurrence, ...row }) => {
     let state: TimelineState;
     if (occurrence?.ingestionReport === "TAKEN") state = "TAKEN";
-    else if (occurrence?.ingestionReport === "NOT_TAKEN") state = "NOT_TAKEN";
-    else if (occurrence && now >= occurrence.eligibleFrom && now <= occurrence.expiresAt) state = "DUE";
-    else if (row.at < now) state = "NO_REPORT";
-    else if (!nextAssigned) state = "NEXT";
+    else if (row.at <= now) state = "NEEDS_CONFIRMATION";
     else state = "UPCOMING";
-    if (state === "NEXT" || state === "DUE") nextAssigned = true;
     return { ...row, state };
   });
 }
 
-/** The hero dose: the first due dose, otherwise the first upcoming one. */
+/** The next scheduled dose still in the future. Unreported past doses are shown in the schedule, never here. */
 export function pickNextDose(rows: readonly TimelineRow[]) {
-  return rows.find((row) => row.state === "DUE") ?? rows.find((row) => row.state === "NEXT") ?? null;
+  return rows.find((row) => row.state === "UPCOMING") ?? null;
 }
 
 export type DoseDetails = { dosage: string; slotLabel: string; instruction: string | null };
@@ -153,10 +145,31 @@ export function describeDose(row: Pick<TimelineRow, "instructions" | "slot">): D
 }
 
 export const timelineStateLabel: Record<TimelineState, string> = {
-  TAKEN: "Reported taken",
-  NOT_TAKEN: "Reported not taken",
-  DUE: "Due now",
-  NEXT: "Next",
+  TAKEN: "Complete",
+  NEEDS_CONFIRMATION: "Incomplete",
   UPCOMING: "Upcoming",
-  NO_REPORT: "No report yet",
 };
+
+/**
+ * Countdown to a real scheduled dose, e.g. "in 12 min". Returns null once the time has
+ * passed or is under a minute away, so no countdown is ever invented.
+ */
+export function countdownLabel(at: number, now: number) {
+  const minutes = Math.ceil((at - now) / 60_000);
+  if (!Number.isFinite(minutes) || minutes <= 0) return null;
+  if (minutes < 60) return `in ${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  return rest === 0 ? `in ${hours} hr` : `in ${hours} hr ${rest} min`;
+}
+
+/** One-line "1 tablet · With water" text: the dosage plus the instruction with the amount phrase removed. */
+export function compactDoseLine(row: Pick<TimelineRow, "instructions" | "slot">) {
+  const { dosage, instruction } = describeDose(row);
+  const rest = (instruction ?? "")
+    .replace(/\b(\d+(?:\.\d+)?|one|two|three|half)\s+(tablets?|pills?|capsules?|softgels?|drops?|mg|ml)\b/i, "")
+    .replace(/^[\s·,;:-]*(take\s+)?/i, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  return rest ? `${dosage} · ${rest.replace(/^./, (c) => c.toUpperCase())}` : dosage;
+}

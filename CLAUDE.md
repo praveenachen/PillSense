@@ -12,9 +12,15 @@ Convex agent skills for common tasks can be installed by running
 
 ## Visual design authority
 
-`docs/design/pillsense-ui-reference-v2.png` is the binding visual spec for the
-mobile UI; the current styling is not authoritative. See "Visual Authority" in
-`PRODUCT.md`. Presentation-only changes: never alter Convex, Clerk, BLE,
-voice, or hardware-safety behavior.
+`docs/design/CURRENT_DESIGN_DIRECTION.md` is the single authoritative visual
+and interaction specification. The implemented dark Today screen, its `pd-*`
+tokens, eight-position dispenser SVG, and shared patient navigation are the
+current baseline. Remaining light screens are transitional and await
+screen-by-screen migration; do not use them to revert Today.
+
+Old H5A light/teal references are historical only and live under
+`docs/design/archive/pre-dark-redesign/`. Presentation work must never alter
+Convex, Clerk, BLE, voice, camera, medication-state, or hardware-safety
+behavior.
 
 <!-- convex-ai-end -->

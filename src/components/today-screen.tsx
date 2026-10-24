@@ -1,12 +1,11 @@
 "use client";
 
+import { useUser } from "@clerk/nextjs";
 import { useConvexAuth, useMutation, useQuery } from "convex/react";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { api } from "../../convex/_generated/api";
-import type { Id } from "../../convex/_generated/dataModel";
 import { AuthRequired } from "./auth-required";
-import { BrandMark } from "./mobile-ui";
-import { PatientSupplyReminder } from "./patient-supply-reminder";
+import { RefillBell } from "./refill-bell";
 import { TodayView, type TodayDevice } from "./today-view";
 import {
   buildTodayTimeline,
@@ -19,25 +18,30 @@ import {
 
 /* ---------------------------- live container ---------------------------- */
 
-export function TodayScreen({ account, onOpenDispenser, onOpenSchedule }: { account?: ReactNode; onOpenDispenser?: () => void; onOpenSchedule?: () => void }) {
+/** The account control is built from the patient's initial once it is known. */
+export type AccountSlot = ReactNode | ((initial: string) => ReactNode);
+const resolveAccount = (account: AccountSlot | undefined, initial: string) => (typeof account === "function" ? account(initial) : account);
+
+type TodayScreenProps = { account?: AccountSlot; onOpenDispenser?: () => void; onOpenSchedule?: () => void; onOpenVoice?: () => void };
+
+export function TodayScreen({ account, onOpenDispenser, onOpenSchedule, onOpenVoice }: TodayScreenProps) {
   const { isLoading, isAuthenticated } = useConvexAuth();
   if (isLoading) return <StateCard title="Loading your day…">Confirming authentication and loading schedules.</StateCard>;
-  if (!isAuthenticated) return <div className="space-y-4"><TodayBrandHeader account={account} /><AuthRequired message="Patient schedules are private and require Convex to accept your Clerk session." /></div>;
-  return <AuthenticatedToday account={account} onOpenDispenser={onOpenDispenser} onOpenSchedule={onOpenSchedule} />;
+  if (!isAuthenticated) return <div className="space-y-4"><TodayBrandHeader account={resolveAccount(account, "P")} /><AuthRequired message="Patient schedules are private and require Convex to accept your Clerk session." /></div>;
+  return <AuthenticatedToday account={account} onOpenDispenser={onOpenDispenser} onOpenSchedule={onOpenSchedule} onOpenVoice={onOpenVoice} />;
 }
 
 function TodayBrandHeader({ account }: { account?: ReactNode }) {
   return (
-    <header className="flex items-center gap-3">
-      <BrandMark size={44} />
-      <div className="min-w-0 flex-1"><p className="ps-display text-[1.35rem] font-semibold leading-none text-[#0f172a]">PillSense</p><p className="mt-1 text-xs text-[#64748b]">Care, connected.</p></div>
+    <header className="flex min-h-11 items-center justify-between">
+      <p className="text-[1.25rem] font-semibold tracking-tight text-pd-text">PillSense</p>
       {account}
     </header>
   );
 }
 
 function StateCard({ title, children }: { title: string; children: ReactNode }) {
-  return <section className="ps-card p-5"><h2 className="ps-display text-xl font-semibold text-[#0f172a]">{title}</h2><div className="mt-2 text-sm leading-6 text-[#475569]">{children}</div></section>;
+  return <section className="pd-card p-5"><h2 className="text-xl font-semibold text-pd-text">{title}</h2><div className="mt-2 text-sm leading-6 text-pd-muted">{children}</div></section>;
 }
 
 const runtimeLabels: Record<string, string> = {
@@ -46,7 +50,8 @@ const runtimeLabels: Record<string, string> = {
   CALIBRATION_REQUIRED: "Calibration required",
 };
 
-function AuthenticatedToday({ account, onOpenDispenser, onOpenSchedule }: { account?: ReactNode; onOpenDispenser?: () => void; onOpenSchedule?: () => void }) {
+function AuthenticatedToday({ account, onOpenDispenser, onOpenSchedule, onOpenVoice }: TodayScreenProps) {
+  const { user } = useUser();
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 60_000);
@@ -54,9 +59,15 @@ function AuthenticatedToday({ account, onOpenDispenser, onOpenSchedule }: { acco
   }, []);
   const dashboard = useQuery(api.patient.dashboard);
   const doses = useQuery(api.occurrences.listForPatient, { now });
-  const reportIngestion = useMutation(api.dispensing.reportIngestion);
-  const [markBusy, setMarkBusy] = useState(false);
-  const [markError, setMarkError] = useState<string | null>(null);
+  const ensureDashboardShowcase = useMutation(api.demo.ensureDashboardShowcase);
+  const showcaseRequested = useRef(false);
+
+  useEffect(() => {
+    if (dashboard?.status !== "ready" || !dashboard.isSynthetic || showcaseRequested.current) return;
+    showcaseRequested.current = true;
+    const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+    void ensureDashboardShowcase({ timezone }).catch(() => undefined);
+  }, [dashboard, ensureDashboardShowcase]);
 
   const timeline = useMemo(() => {
     if (!dashboard || dashboard.status !== "ready" || !doses) return null;
@@ -66,7 +77,7 @@ function AuthenticatedToday({ account, onOpenDispenser, onOpenSchedule }: { acco
   }, [dashboard, doses, now]);
 
   if (dashboard === undefined || (dashboard.status === "ready" && (doses === undefined || timeline === null))) {
-    return <div className="space-y-4"><TodayBrandHeader account={account} /><StateCard title="Loading your day…">Listening for schedule updates from Convex.</StateCard></div>;
+    return <div className="space-y-4"><TodayBrandHeader account={resolveAccount(account, "P")} /><StateCard title="Loading your day…">Listening for schedule updates from Convex.</StateCard></div>;
   }
   if (dashboard.status !== "ready") {
     const message = dashboard.status === "needs_onboarding"
@@ -74,48 +85,29 @@ function AuthenticatedToday({ account, onOpenDispenser, onOpenSchedule }: { acco
       : dashboard.status === "unauthorized"
         ? "This account does not have an active patient profile or caregiver relationship."
         : "The paired synthetic patient record could not be loaded.";
-    return <div className="space-y-4"><TodayBrandHeader account={account} /><StateCard title="Patient view unavailable">{message}</StateCard></div>;
+    return <div className="space-y-4"><TodayBrandHeader account={resolveAccount(account, "P")} /><StateCard title="Patient view unavailable">{message}</StateCard></div>;
   }
 
   const rows = timeline ?? [];
   const nextDose = pickNextDose(rows);
+  const signedInName = firstName(user?.fullName ?? user?.firstName ?? dashboard.patientName);
   const device = doses?.device;
   const deviceView: TodayDevice = !device
-    ? { label: "Dispenser", detail: "Open My Dispenser to pair Bluetooth", tone: "idle" }
-    : { label: "Demo Dispenser", detail: runtimeLabels[device.state] ?? device.state.toLowerCase().replaceAll("_", " "), tone: device.connected && device.state === "READY" ? "ready" : "attention" };
-  const dueCount = rows.filter((row) => row.state === "DUE").length;
-  const summary = rows.length === 0
-    ? "Nothing is scheduled today."
-    : dueCount > 0
-      ? `${dueCount === 1 ? "A dose is" : `${dueCount} doses are`} due now.`
-      : `${rows.length} ${rows.length === 1 ? "dose" : "doses"} scheduled today.`;
-
-  async function onConfirm() {
-    if (!nextDose?.occurrenceId) return;
-    setMarkBusy(true);
-    setMarkError(null);
-    try {
-      await reportIngestion({ occurrenceId: nextDose.occurrenceId as Id<"doseOccurrences">, report: "TAKEN" });
-    } catch (caught) {
-      setMarkError(caught instanceof Error ? caught.message : "The report could not be saved.");
-    } finally {
-      setMarkBusy(false);
-    }
-  }
-
+    ? { label: "Dispenser", detail: "Open My Dispenser to pair Bluetooth", tone: "idle", connected: false }
+    : { label: "Demo Dispenser", detail: runtimeLabels[device.state] ?? device.state.toLowerCase().replaceAll("_", " "), tone: device.connected && device.state === "READY" ? "ready" : "attention", connected: device.connected };
   return (
     <TodayView
       greeting={greetingFor(new Date(now).getHours())}
-      name={firstName(dashboard.patientName)}
-      summary={summary}
+      name={signedInName}
+      now={now}
       device={deviceView}
       nextDose={nextDose}
       timeline={rows}
-      account={account}
-      supply={<PatientSupplyReminder />}
+      account={resolveAccount(account, signedInName.charAt(0).toUpperCase() || "P")}
+      notifications={<RefillBell />}
       onOpenDispenser={onOpenDispenser}
       onOpenSchedule={onOpenSchedule}
-      markTaken={{ busy: markBusy, error: markError, onConfirm: () => void onConfirm() }}
+      onOpenVoice={onOpenVoice}
     />
   );
 }

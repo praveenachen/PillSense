@@ -5,7 +5,7 @@ import type { ReactNode } from "react";
 export type IconName =
   | "home" | "cube" | "mic" | "calendar" | "people" | "bell" | "bluetooth" | "info"
   | "chart" | "check" | "chevron" | "back" | "gear" | "close" | "alert" | "pill"
-  | "chat" | "refresh" | "wave" | "arrow" | "link" | "clock" | "shield";
+  | "chat" | "refresh" | "wave" | "arrow" | "link" | "clock" | "shield" | "user" | "camera" | "form";
 
 export function Icon({ name, size = 22, strokeWidth = 1.8, className }: { name: IconName; size?: number; strokeWidth?: number; className?: string }) {
   const p = { width: size, height: size, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth, strokeLinecap: "round" as const, strokeLinejoin: "round" as const, className, "aria-hidden": true };
@@ -15,6 +15,9 @@ export function Icon({ name, size = 22, strokeWidth = 1.8, className }: { name: 
     case "mic": return <svg {...p}><rect x="9" y="3" width="6" height="11" rx="3" /><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21M9 21h6" /></svg>;
     case "calendar": return <svg {...p}><rect x="4" y="5" width="16" height="15" rx="3" /><path d="M8 3v4M16 3v4M4 10h16" /></svg>;
     case "people": return <svg {...p}><circle cx="9" cy="8.5" r="3.2" /><path d="M3.5 19c.5-3.2 2.7-5 5.5-5s5 1.8 5.5 5" /><circle cx="17" cy="9.5" r="2.4" /><path d="M16.5 14.2c2.3.2 3.7 1.7 4 4.3" /></svg>;
+    case "user": return <svg {...p}><circle cx="12" cy="8.5" r="3.6" /><path d="M5 20c.6-3.8 3.4-6 7-6s6.4 2.200 7 6" /></svg>;
+    case "camera": return <svg {...p}><path d="M4 8.5A1.500 1.500 0 0 1 5.500 7H8l1.200-2h5.600L16 7h2.500A1.500 1.500 0 0 1 20 8.500v9a1.500 1.500 0 0 1-1.500 1.500h-13A1.500 1.500 0 0 1 4 17.500v-9Z" /><circle cx="12" cy="13" r="3.400" /></svg>;
+    case "form": return <svg {...p}><rect x="5" y="4.500" width="14" height="16" rx="2.500" /><path d="M9 4.500V3.500h6v1M9 11h6M9 15h4" /></svg>;
     case "bell": return <svg {...p}><path d="M6 16.5V11a6 6 0 0 1 12 0v5.5l1.5 1.5h-15L6 16.5Z" /><path d="M10 20.5a2 2 0 0 0 4 0" /></svg>;
     case "bluetooth": return <svg {...p}><path d="m7 7.5 10 9-5 4.5V3l5 4.500-10 9" /></svg>;
     case "info": return <svg {...p}><circle cx="12" cy="12" r="8.5" /><path d="M12 11v5.2M12 7.8v.1" /></svg>;
@@ -22,7 +25,7 @@ export function Icon({ name, size = 22, strokeWidth = 1.8, className }: { name: 
     case "check": return <svg {...p}><path d="m5 12.5 4.5 4.5L19 7.500" /></svg>;
     case "chevron": return <svg {...p}><path d="m9.5 5.500 6.500 6.500-6.500 6.500" /></svg>;
     case "back": return <svg {...p}><path d="M19 12H5M11 6l-6 6 6 6" /></svg>;
-    case "gear": return <svg {...p}><circle cx="12" cy="12" r="3" /><path d="M12 3.500v2.200M12 18.300v2.200M3.500 12h2.200M18.300 12h2.200M6 6l1.500 1.500M16.500 16.500 18 18M18 6l-1.500 1.500M7.500 16.500 6 18" /></svg>;
+    case "gear": return <svg {...p}><circle cx="12" cy="12" r="3.200" /><path d="M19.400 15a1.650 1.650 0 0 0 .330 1.820l.060.060a2 2 0 1 1-2.830 2.830l-.060-.060a1.650 1.650 0 0 0-1.820-.330 1.650 1.650 0 0 0-1 1.510V21a2 2 0 1 1-4 0v-.090a1.650 1.650 0 0 0-1-1.510 1.650 1.650 0 0 0-1.820.330l-.060.060a2 2 0 1 1-2.830-2.830l.060-.060a1.650 1.650 0 0 0 .330-1.820 1.650 1.650 0 0 0-1.510-1H3a2 2 0 1 1 0-4h.090a1.650 1.650 0 0 0 1.510-1 1.650 1.650 0 0 0-.330-1.820l-.060-.060a2 2 0 1 1 2.830-2.830l.060.060a1.650 1.650 0 0 0 1.820.330h0a1.650 1.650 0 0 0 1-1.510V3a2 2 0 1 1 4 0v.090a1.650 1.650 0 0 0 1 1.510h0a1.650 1.650 0 0 0 1.820-.330l.060-.060a2 2 0 1 1 2.830 2.830l-.060.060a1.650 1.650 0 0 0-.330 1.820v0a1.650 1.650 0 0 0 1.510 1H21a2 2 0 1 1 0 4h-.090a1.650 1.650 0 0 0-1.510 1Z" /></svg>;
     case "close": return <svg {...p}><path d="m6 6 12 12M18 6 6 18" /></svg>;
     case "alert": return <svg {...p}><path d="M12 4 3.500 19h17L12 4Z" /><path d="M12 10v4M12 16.500v.1" /></svg>;
     case "pill": return <svg {...p}><rect x="3.500" y="8.500" width="17" height="7" rx="3.500" transform="rotate(-40 12 12)" /><path d="m9.500 9.500 5 5" /></svg>;

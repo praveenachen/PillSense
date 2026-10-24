@@ -1,8 +1,6 @@
 import { AppShell } from "@/components/app-shell";
 import { PatientDashboard } from "@/components/patient-dashboard";
-import { MockDispensingPanel } from "@/components/mock-dispensing-panel";
 import { PatientReminders } from "@/components/patient-reminders";
-import { ArduinoStatusPanel } from "@/components/arduino-status-panel";
 import { PatientSupplyReminder } from "@/components/patient-supply-reminder";
 import { VoiceCompanion } from "@/components/voice-companion";
 
@@ -13,8 +11,6 @@ export default function PatientPage() {
       <div className="mt-6"><VoiceCompanion /></div>
       <PatientSupplyReminder />
       <PatientReminders />
-      <div className="mt-6 mx-auto w-full max-w-[32rem]"><ArduinoStatusPanel /></div>
-      <div className="mt-6"><MockDispensingPanel /></div>
     </AppShell>
   );
 }

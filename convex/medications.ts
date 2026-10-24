@@ -1,6 +1,7 @@
 import { ConvexError, v } from "convex/values";
 import { mutation } from "./_generated/server";
 import { requireCaregiverAccess } from "./lib/authorization";
+import { reconcilePatientRefills } from "./refills";
 import {
   validateDemoInventory,
   validateMedicationText,
@@ -28,9 +29,14 @@ export const createWithAssignment = mutation({
     weekdays: v.array(weekdayValidator),
     timezone: v.string(),
     demoInventory: v.number(),
+    /** Pills supplied for this slot; seeds the refill estimate. */
+    supplyCount: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const { caregiver } = await requireCaregiverAccess(ctx, args.patientId);
+    if (args.supplyCount !== undefined && (!Number.isSafeInteger(args.supplyCount) || args.supplyCount < 0 || args.supplyCount > 10000)) {
+      throw new ConvexError("Pill count must be a whole number from 0 to 10000");
+    }
     validateSlot(args.slot);
     validateSchedule(args.localTime, args.weekdays, args.timezone);
     validateMedicationText(args.name, args.instructions);
@@ -78,7 +84,7 @@ export const createWithAssignment = mutation({
       revision: 1,
       createdAt: now,
     });
-    await ctx.db.insert("compartmentAssignments", {
+    const assignmentId = await ctx.db.insert("compartmentAssignments", {
       deviceId: device._id,
       patientId: args.patientId,
       medicationId,
@@ -87,8 +93,15 @@ export const createWithAssignment = mutation({
       active: true,
       assignedBy: caregiver._id,
       createdAt: now,
+      ...(args.supplyCount === undefined ? {} : {
+        estimatedSupplyCount: args.supplyCount,
+        supplyEstimateSource: "CAREGIVER_VERIFIED" as const,
+        supplyEstimateUpdatedAt: now,
+        supplyRevision: 1,
+      }),
     });
+    if (args.supplyCount !== undefined) await reconcilePatientRefills(ctx, args.patientId, now);
 
-    return { medicationId, slot: args.slot };
+    return { medicationId, assignmentId, slot: args.slot };
   },
 });

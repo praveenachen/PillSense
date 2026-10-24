@@ -24,6 +24,7 @@ import type * as dispensing from "../dispensing.js";
 import type * as http from "../http.js";
 import type * as lib_agentRunCreation from "../lib/agentRunCreation.js";
 import type * as lib_authorization from "../lib/authorization.js";
+import type * as lib_instructionOptions from "../lib/instructionOptions.js";
 import type * as lib_medicationValidation from "../lib/medicationValidation.js";
 import type * as lib_occurrenceGeneration from "../lib/occurrenceGeneration.js";
 import type * as lib_refillForecast from "../lib/refillForecast.js";
@@ -60,6 +61,7 @@ declare const fullApi: ApiFromModules<{
   http: typeof http;
   "lib/agentRunCreation": typeof lib_agentRunCreation;
   "lib/authorization": typeof lib_authorization;
+  "lib/instructionOptions": typeof lib_instructionOptions;
   "lib/medicationValidation": typeof lib_medicationValidation;
   "lib/occurrenceGeneration": typeof lib_occurrenceGeneration;
   "lib/refillForecast": typeof lib_refillForecast;

@@ -9,11 +9,32 @@ const MINUTE = 60 * 1000;
 const DAY = 24 * 60 * MINUTE;
 
 const showcaseMedications = [
-  { name: "Vitamin D", instructions: "1 tablet · With breakfast", slot: 1, localTime: "08:00", report: "TAKEN" as const },
-  { name: "Iron Supplement", instructions: "1 tablet · With water", slot: 6, localTime: "09:00", report: "TAKEN" as const },
-  { name: "Omega-3", instructions: "1 capsule · With lunch", slot: 3, localTime: "13:00", report: "NOT_TAKEN" as const },
-  { name: "Magnesium", instructions: "1 tablet · With evening meal", slot: 5, localTime: "20:00", report: "UNREPORTED" as const },
+  { name: "Vitamin D", instructions: "1 tablet · Eat with breakfast", slot: 1, localTime: "08:00", report: "TAKEN" as const },
+  { name: "Iron Supplement", instructions: "1 tablet · Drink with water", slot: 6, localTime: "09:00", report: "TAKEN" as const },
+  { name: "Omega-3", instructions: "1 capsule · Eat with lunch", slot: 3, localTime: "13:00", report: "NOT_TAKEN" as const },
+  { name: "Magnesium", instructions: "1 tablet · Eat with dinner", slot: 5, localTime: "20:00", report: "UNREPORTED" as const },
 ] as const;
+
+const seededInstructions: Record<string, string> = {
+  "iron pills": "1 tablet · Eat with breakfast",
+  "vitamin d": "1 tablet · Eat with breakfast",
+  "iron supplement": "1 tablet · Drink with water",
+  "omega-3": "1 capsule · Eat with lunch",
+  magnesium: "1 tablet · Eat with dinner",
+};
+// Older wording that the seeded phrases above replace.
+// Demo pill counts so the dispenser shows a mix of healthy and low supply.
+const seededCounts: Record<string, number> = {
+  "vitamin d": 28,
+  "iron supplement": 6,
+  "omega-3": 17,
+  magnesium: 3,
+  "iron pills": 12,
+};
+const legacyInstructions = new Set([
+  "", "synthetic demo only", "1 tablet · with breakfast", "1 tablet · with water",
+  "1 capsule · with lunch", "1 tablet · with evening meal", "1 tablet · eat with dinner",
+]);
 
 function localDateKey(epochMs: number, timezone: string) {
   return new Intl.DateTimeFormat("en-CA", {
@@ -170,10 +191,34 @@ export const ensureDashboardShowcase = mutation({
       medicationsCreated += 1;
     }
 
+    // Synthetic medications created without real instructions get a friendly seeded one.
+    for (const medication of medications) {
+      if (!medication.active) continue;
+      const seeded = seededInstructions[medication.name.toLocaleLowerCase()];
+      if (seeded && medication.instructions !== seeded && legacyInstructions.has(medication.instructions.trim().toLocaleLowerCase())) {
+        await ctx.db.patch("medications", medication._id, { instructions: seeded });
+      }
+    }
+
     const refreshedMedications = await ctx.db
       .query("medications")
       .withIndex("by_patient", (q) => q.eq("patientId", patient._id))
       .take(16);
+    const refreshedAssignments = (await ctx.db
+      .query("compartmentAssignments")
+      .withIndex("by_patient", (q) => q.eq("patientId", patient._id))
+      .take(8)).filter((assignment) => assignment.active);
+    for (const assignment of refreshedAssignments) {
+      if (assignment.estimatedSupplyCount !== undefined) continue;
+      const count = seededCounts[refreshedMedications.find((medication) => medication._id === assignment.medicationId)?.name.toLocaleLowerCase() ?? ""];
+      if (count === undefined) continue;
+      await ctx.db.patch("compartmentAssignments", assignment._id, {
+        estimatedSupplyCount: count,
+        supplyEstimateSource: "SYNTHETIC_DEMO",
+        supplyEstimateUpdatedAt: now,
+        supplyRevision: (assignment.supplyRevision ?? 0) + 1,
+      });
+    }
     const showcaseByName = new Map(showcaseMedications.map((item) => [item.name.toLocaleLowerCase(), item]));
     const todayKey = localDateKey(now, args.timezone);
     let occurrencesCreated = 0;

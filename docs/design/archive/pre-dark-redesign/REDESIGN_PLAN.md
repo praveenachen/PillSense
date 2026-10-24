@@ -1,6 +1,10 @@
-# PillSense UI redesign: reference-reproduction spec
+# Archived H5A UI redesign: reference-reproduction spec
 
-Binding reference: `docs/design/pillsense-ui-reference-v2.png`. The earlier sunset-peach system is not authoritative. See "Visual Authority" in `PRODUCT.md`.
+> **Historical record only.** This plan and the adjacent
+> `pillsense-ui-reference-v2.png` are superseded and are not current design
+> instructions. Follow [`../../CURRENT_DESIGN_DIRECTION.md`](../../CURRENT_DESIGN_DIRECTION.md).
+
+Historical binding reference: `pillsense-ui-reference-v2.png`.
 Presentation only: no Convex, Clerk, Cartesia, BLE, firmware or dose-state changes.
 
 ## Design tokens (implemented in `src/app/globals.css`)
@@ -26,4 +30,4 @@ Presentation only: no Convex, Clerk, Cartesia, BLE, firmware or dose-state chang
 No fabricated battery, adherence, pill counts, or ingestion. "Reported taken" labels stay. Motor completion is never presented as ingestion.
 
 ## Verification
-Headless Chrome at 390×844 @2x of the real components via a temporary fixture route (removed). Captures in `docs/design/redesign/`.
+Headless Chrome at 390×844 @2x of the real components via a temporary fixture route (removed). Historical captures are in `redesign/` beside this plan.

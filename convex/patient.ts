@@ -53,6 +53,7 @@ export const dashboard = query({
           instructions: medication.instructions,
           slot: assignment.slot,
           demoInventory: assignment.demoInventory,
+          supplyCount: assignment.estimatedSupplyCount ?? null,
           localTime: schedule.localTime,
           weekdays: schedule.weekdays,
           timezone: schedule.timezone,

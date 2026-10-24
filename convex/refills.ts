@@ -142,7 +142,7 @@ export const patientReminder = query({
     ))).flat();
     const reminders = await Promise.all(cases.map(async (refillCase) => {
       const medication = await ctx.db.get("medications", refillCase.medicationId);
-      return medication ? { id: refillCase._id, medicationName: medication.name, confidence: refillCase.confidence, estimatedDaysRemaining: refillCase.estimatedDaysRemaining, triggerReason: refillCase.triggerReason } : null;
+      return medication ? { id: refillCase._id, medicationName: medication.name, confidence: refillCase.confidence, estimatedDaysRemaining: refillCase.estimatedDaysRemaining, triggerReason: refillCase.triggerReason, status: refillCase.status, supplyCount: refillCase.estimatedSupplyCount ?? null, runOutAt: refillCase.estimatedRunOutAt ?? null } : null;
     }));
     return { patientName: patient.displayName, reminders: reminders.filter((row) => row !== null) };
   },

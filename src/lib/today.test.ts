@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildTodayTimeline, firstName, greetingFor, pickNextDose, type DoseOccurrence, type ScheduledMedication } from "./today";
+import { buildTodayTimeline, compactDoseLine, countdownLabel, firstName, greetingFor, pickNextDose, type DoseOccurrence, type ScheduledMedication } from "./today";
 
 const NOW = new Date(2026, 9, 23, 9, 0, 0).getTime(); // a Friday, 9:00 local
 const at = (h: number, m = 0) => new Date(2026, 9, 23, h, m, 0).getTime();
@@ -28,24 +28,24 @@ describe("today timeline", () => {
   it("never marks a dose taken without a persisted patient report", () => {
     const completedMotor = occurrence({ id: "o1", medicationName: "Vitamin D", scheduledFor: at(8), attemptStatus: "COMPLETED" });
     const rows = buildTodayTimeline(meds, [completedMotor], NOW);
-    expect(rows[0].state).toBe("NO_REPORT");
+    expect(rows[0].state).toBe("NEEDS_CONFIRMATION");
     expect(rows.some((row) => row.state === "TAKEN")).toBe(false);
   });
 
-  it("marks TAKEN and NOT_TAKEN only from patient reports", () => {
+  it("uses only Taken, Needs confirmation and Upcoming", () => {
     const taken = occurrence({ id: "o1", medicationName: "Vitamin D", scheduledFor: at(8), ingestionReport: "TAKEN" });
     const notTaken = occurrence({ id: "o2", medicationName: "Metformin", scheduledFor: at(9, 30), ingestionReport: "NOT_TAKEN" });
-    const rows = buildTodayTimeline(meds, [taken, notTaken], NOW);
-    expect(rows.map((row) => row.state)).toEqual(["TAKEN", "NOT_TAKEN", "NEXT"]);
+    const rows = buildTodayTimeline(meds, [taken, notTaken], NOW + 60 * 60_000);
+    expect(rows.map((row) => row.state)).toEqual(["TAKEN", "NEEDS_CONFIRMATION", "UPCOMING"]);
   });
 
-  it("picks a due persisted occurrence ahead of a merely scheduled time", () => {
-    const due = occurrence({ id: "o2", medicationName: "Metformin", scheduledFor: at(9, 5) });
-    const rows = buildTodayTimeline(meds, [due], NOW);
+  it("picks the next future dose and never pins an unreported past dose", () => {
+    const overdue = occurrence({ id: "o1", medicationName: "Vitamin D", scheduledFor: at(8) });
+    const rows = buildTodayTimeline(meds, [overdue], NOW);
+    expect(rows[0].state).toBe("NEEDS_CONFIRMATION");
     const next = pickNextDose(rows);
     expect(next?.medicationName).toBe("Metformin");
-    expect(next?.state).toBe("DUE");
-    expect(next?.occurrenceId).toBe("o2");
+    expect(next?.state).toBe("UPCOMING");
   });
 
   it("has no occurrence id (so no Mark-as-taken) for schedule-only rows", () => {
@@ -74,5 +74,24 @@ describe("greeting helpers", () => {
   it("extracts a first name", () => {
     expect(firstName("Eleanor Vance")).toBe("Eleanor");
     expect(firstName(undefined)).toBe("");
+  });
+});
+
+describe("countdownLabel", () => {
+  it("counts down only to a future scheduled time", () => {
+    expect(countdownLabel(NOW + 12 * 60_000, NOW)).toBe("in 12 min");
+    expect(countdownLabel(NOW + 11.2 * 60_000, NOW)).toBe("in 12 min");
+    expect(countdownLabel(NOW + 60 * 60_000, NOW)).toBe("in 1 hr");
+    expect(countdownLabel(NOW + 125 * 60_000, NOW)).toBe("in 2 hr 5 min");
+    expect(countdownLabel(NOW, NOW)).toBeNull();
+    expect(countdownLabel(NOW - 60_000, NOW)).toBeNull();
+  });
+});
+
+describe("compactDoseLine", () => {
+  it("joins dosage and the remaining instruction", () => {
+    expect(compactDoseLine({ instructions: "Take 2 tablets with breakfast", slot: 1 })).toBe("2 tablets · With breakfast");
+    expect(compactDoseLine({ instructions: "With water", slot: 6 })).toBe("1 dispenser dose · With water");
+    expect(compactDoseLine({ instructions: "", slot: 6 })).toBe("1 dispenser dose");
   });
 });

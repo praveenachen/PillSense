@@ -1,0 +1,318 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PillSense BLE Motor Test</title>
+
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 650px;
+      margin: 50px auto;
+      padding: 20px;
+      background: #f7f9fc;
+      color: #172033;
+    }
+
+    h1 { margin-bottom: 8px; }
+
+    .subtitle { color: #667085; }
+
+    .status {
+      margin: 24px 0;
+      padding: 16px;
+      background: white;
+      border-radius: 10px;
+    }
+
+    button {
+      padding: 12px 18px;
+      margin: 5px;
+      border: none;
+      border-radius: 8px;
+      background: #2563eb;
+      color: white;
+      cursor: pointer;
+      font-size: 14px;
+    }
+
+    button:disabled {
+      background: #a0aec0;
+      cursor: not-allowed;
+    }
+
+    .warning {
+      background: #fff3d6;
+      border-radius: 8px;
+      padding: 14px;
+      margin: 20px 0;
+    }
+
+    pre {
+      background: #111827;
+      color: #86efac;
+      padding: 18px;
+      border-radius: 10px;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      min-height: 120px;
+    }
+  </style>
+</head>
+
+<body>
+  <h1>PillSense Bluetooth Motor Test</h1>
+  <p class="subtitle">
+    Arduino Uno R4 WiFi — supervised hardware testing
+  </p>
+
+  <div class="warning">
+    <strong>Safety:</strong>
+    Test with an EMPTY carousel only.
+    Manually align Slot 0 before powering on.
+    Do not use real medications.
+    Do not retry a movement if its outcome is uncertain.
+  </div>
+
+  <div class="status">
+    <strong>Connection:</strong>
+    <span id="connection">Disconnected</span>
+  </div>
+
+  <button id="connect">
+    1. Connect to Arduino
+  </button>
+
+  <button id="status" disabled>
+    2. GET_STATUS
+  </button>
+
+  <button id="move" disabled>
+    3. Move to Slot 6 and Return
+  </button>
+
+  <button id="lastResult" disabled>
+    4. GET_LAST_RESULT
+  </button>
+
+  <h3>Activity Log</h3>
+  <pre id="output">Waiting for connection...</pre>
+
+  <script>
+    // Verified PillSense BLE UUIDs
+    const SERVICE =
+      "19b10000-e8f2-537e-4f6c-d104768a1214";
+
+    const COMMAND =
+      "19b10001-e8f2-537e-4f6c-d104768a1214";
+
+    const STATUS =
+      "19b10002-e8f2-537e-4f6c-d104768a1214";
+
+    const encoder = new TextEncoder();
+    const decoder = new TextDecoder();
+
+    const output = document.getElementById("output");
+    const connectionLabel =
+      document.getElementById("connection");
+
+    const connectButton =
+      document.getElementById("connect");
+
+    const statusButton =
+      document.getElementById("status");
+
+    const moveButton =
+      document.getElementById("move");
+
+    const lastResultButton =
+      document.getElementById("lastResult");
+
+    let device = null;
+    let commandChar = null;
+    let statusChar = null;
+
+    // This test allows at most one movement
+    // during this browser session.
+    let movementAttempted = false;
+
+    function log(message) {
+      const time = new Date().toLocaleTimeString();
+      output.textContent +=
+        "\n[" + time + "] " + message;
+    }
+
+    function setConnected(connected) {
+      connectionLabel.textContent =
+        connected ? "Connected" : "Disconnected";
+
+      statusButton.disabled = !connected;
+      lastResultButton.disabled = !connected;
+
+      moveButton.disabled =
+        !connected || movementAttempted;
+    }
+
+    function handleDisconnect() {
+      setConnected(false);
+      commandChar = null;
+      statusChar = null;
+
+      log("Bluetooth disconnected.");
+      log("Do NOT automatically retry movement.");
+    }
+
+    async function sendCommand(text) {
+      if (!commandChar || !statusChar) {
+        throw new Error("Arduino is not connected.");
+      }
+
+      await commandChar.writeValueWithResponse(
+        encoder.encode(text)
+      );
+
+      // Give Arduino time to process.
+      await new Promise(resolve =>
+        setTimeout(resolve, 150)
+      );
+
+      const value = await statusChar.readValue();
+
+      return decoder.decode(value);
+    }
+
+    // ==================================
+    // CONNECT
+    // ==================================
+
+    connectButton.onclick = async () => {
+      try {
+        if (!navigator.bluetooth) {
+          throw new Error(
+            "Web Bluetooth unavailable. Use desktop Chrome."
+          );
+        }
+
+        log("Searching for PillSense...");
+
+        device = await navigator.bluetooth.requestDevice({
+          filters: [{ services: [SERVICE] }]
+        });
+
+        device.addEventListener(
+          "gattserverdisconnected",
+          handleDisconnect
+        );
+
+        const server = await device.gatt.connect();
+
+        const service =
+          await server.getPrimaryService(SERVICE);
+
+        commandChar =
+          await service.getCharacteristic(COMMAND);
+
+        statusChar =
+          await service.getCharacteristic(STATUS);
+
+        setConnected(true);
+
+        log("Connected to " + device.name);
+
+      } catch (error) {
+        setConnected(false);
+        log("Connection error: " + error.message);
+      }
+    };
+
+    // ==================================
+    // GET STATUS
+    // ==================================
+
+    statusButton.onclick = async () => {
+      try {
+        const result =
+          await sendCommand("GET_STATUS");
+
+        log("GET_STATUS -> " + result);
+
+      } catch (error) {
+        log("Status error: " + error.message);
+        if (!device?.gatt?.connected) {
+          handleDisconnect();
+        }
+      }
+    };
+
+    // ==================================
+    // MOTOR TEST
+    // ==================================
+
+    moveButton.onclick = async () => {
+      if (movementAttempted) return;
+
+      const confirmed = window.confirm(
+        "EMPTY CAROUSEL ONLY.\n\n" +
+        "Is the carousel physically aligned to Slot 0, " +
+        "with no pills loaded and the motor area clear?\n\n" +
+        "This will rotate to Slot 6 and return to Slot 0."
+      );
+
+      if (!confirmed) return;
+
+      movementAttempted = true;
+      moveButton.disabled = true;
+
+      try {
+        // Must be a NEW command ID.
+        // This demo uses one fixed ID because
+        // we only allow one movement per session.
+        const command = "MOVE,6,1001";
+
+        log("Sending " + command);
+
+        await commandChar.writeValueWithResponse(
+          encoder.encode(command)
+        );
+
+        log("Movement command sent.");
+        log("Waiting for physical movement...");
+        log("Expected: Slot 0 -> Slot 6 -> Slot 0.");
+        log("Use GET_LAST_RESULT after movement stops.");
+
+      } catch (error) {
+        log("Movement outcome UNKNOWN: " + error.message);
+        log("Do not retry or resend this command.");
+      }
+    };
+
+    // ==================================
+    // GET LAST RESULT
+    // ==================================
+
+    lastResultButton.onclick = async () => {
+      try {
+        const result =
+          await sendCommand("GET_LAST_RESULT");
+
+        log("GET_LAST_RESULT -> " + result);
+
+        if (result.startsWith("DONE,")) {
+          log("Motor step sequence completed.");
+          log("Physically verify Slot 0 alignment.");
+        }
+
+      } catch (error) {
+        log("Result query error: " + error.message);
+        if (!device?.gatt?.connected) {
+          handleDisconnect();
+        }
+      }
+    };
+
+    setConnected(false);
+  </script>
+</body>
+</html>

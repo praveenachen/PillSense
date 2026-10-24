@@ -1,0 +1,72 @@
+@import "tailwindcss";
+
+:root {
+  --background: #f7f8f6;
+  --foreground: #163a40;
+  --pillsense-canvas: #f7f8f6;
+  --pillsense-ink: #163a40;
+  --pillsense-primary: #087f78;
+  --pillsense-mint: #ddf3eb;
+  --pillsense-alert: #d97706;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-geist-sans), Arial, Helvetica, sans-serif;
+}
+
+@utility input {
+  width: 100%;
+  border-radius: 0.75rem;
+  border: 1px solid #cbd5e1;
+  background: white;
+  padding: 0.65rem 0.75rem;
+  color: #0f172a;
+  outline: none;
+}
+
+.input:focus {
+  border-color: #0d9488;
+  box-shadow: 0 0 0 3px rgb(13 148 136 / 0.12);
+}
+
+.demo-mobile-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: #a8cfc5 transparent;
+}
+
+.demo-mobile-scroll::-webkit-scrollbar {
+  width: 5px;
+}
+
+.demo-mobile-scroll::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: #a8cfc5;
+}
+
+.demo-mobile-content > :first-child {
+  margin-top: 0;
+}
+
+/* The demo is a narrow phone canvas inside a desktop viewport. Keep reused
+   application grids sized to the phone rather than the outer window. */
+.demo-mobile-content [class*="sm:grid-cols-"],
+.demo-mobile-content [class*="md:grid-cols-"],
+.demo-mobile-content [class*="lg:grid-cols-"],
+.demo-mobile-content [class*="xl:grid-cols-"] {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+@media (max-height: 700px) and (min-width: 1024px) {
+  .demo-mobile-scroll {
+    scroll-behavior: auto;
+  }
+}

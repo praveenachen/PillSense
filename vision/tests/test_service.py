@@ -45,3 +45,15 @@ def test_capability_is_bound_to_one_session_and_camera_error_is_reported():
 
         other = client.get("/v1/sessions/session-other/events", headers=headers)
         assert other.status_code == 403
+
+        preview = client.get("/v1/sessions/session-1234/preview.jpg", headers=headers)
+        assert preview.status_code == 204
+
+
+def test_preview_requires_the_session_scoped_capability():
+    with app_client() as client:
+        response = client.get(
+            "/v1/sessions/session-1234/preview.jpg",
+            headers={"Origin": ORIGIN},
+        )
+        assert response.status_code == 401

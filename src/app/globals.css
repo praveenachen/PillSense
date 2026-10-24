@@ -221,6 +221,31 @@ body {
   animation: pd-drift-b 28s ease-in-out infinite;
 }
 .pd-canvas > .demo-mobile-scroll { position: relative; z-index: 1; }
+
+/* Hardware Lab owns legacy developer widgets without changing their behavior.
+   This scope brings the reused controls into the dark internal-tool surface. */
+.hardware-lab-dark .ps-card {
+  background: rgba(17, 22, 37, 0.9) !important;
+  border-color: rgba(151, 163, 190, 0.18) !important;
+  color: #f4f5fb !important;
+  box-shadow: none !important;
+}
+.hardware-lab-dark .ps-card [class*="text-[#"],
+.hardware-lab-dark section [class*="text-[#0f172a]"],
+.hardware-lab-dark section [class*="text-[#334155]"],
+.hardware-lab-dark section [class*="text-[#475569]"],
+.hardware-lab-dark section [class*="text-[#64748b]"] {
+  color: #aab2c8 !important;
+}
+.hardware-lab-dark fieldset {
+  background: rgba(245, 158, 11, 0.06) !important;
+  border-color: rgba(252, 211, 77, 0.22) !important;
+  color: #f4f5fb !important;
+}
+.hardware-lab-legacy > div > section,
+.hardware-lab-legacy > div > div > section {
+  box-shadow: none !important;
+}
 @keyframes pd-drift-a {
   0%, 100% { transform: translate(0, 0) scale(1); }
   50% { transform: translate(5rem, 9rem) scale(1.15); }

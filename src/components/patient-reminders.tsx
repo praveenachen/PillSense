@@ -15,13 +15,13 @@ function errorText(value: unknown) {
   return value instanceof Error ? value.message : "The reminder operation failed.";
 }
 
-export function PatientReminders() {
+export function PatientReminders({ showDeveloperControls = false }: { showDeveloperControls?: boolean } = {}) {
   const { isLoading, isAuthenticated } = useConvexAuth();
   if (isLoading || !isAuthenticated) return null;
-  return <AuthenticatedReminders />;
+  return <AuthenticatedReminders showDeveloperControls={showDeveloperControls} />;
 }
 
-function AuthenticatedReminders() {
+function AuthenticatedReminders({ showDeveloperControls }: { showDeveloperControls: boolean }) {
   const reminders = useQuery(api.reminders.forPatient);
   const reconcile = useMutation(api.reminders.reconcileMine);
   const runScenario = useMutation(api.reminders.runDemoScenario);
@@ -107,7 +107,7 @@ function AuthenticatedReminders() {
         </div>
       )}
 
-      {reminders.isSynthetic && (
+      {reminders.isSynthetic && showDeveloperControls && (
         <details className="mt-5 rounded-2xl border border-dashed border-[#c4b5fd] bg-[#f5f3ff] p-4"><summary className="flex min-h-11 cursor-pointer items-center text-sm font-bold text-[#4c1d95]">DEMO MODE · AUDITED TIME SIMULATION</summary><div className="mt-2">
           <p className="text-sm leading-6 text-slate-600">
             These controls create labeled synthetic occurrences and case transitions. They do not authorize dispensing or reload the one-pill compartment.

@@ -1,6 +1,6 @@
 import { ConvexError, v } from "convex/values";
 import { internalMutation, mutation, query } from "./_generated/server";
-import { resolveDashboardPatient } from "./lib/authorization";
+import { requireHardwareLabOperator, resolveDashboardPatient } from "./lib/authorization";
 import { ensureUpcomingOccurrences } from "./lib/occurrenceGeneration";
 import {
   DEFAULT_REMINDER_WINDOWS,
@@ -57,7 +57,7 @@ export const configureDemoWindows = mutation({
     followUpWindowMinutes: v.number(),
   },
   handler: async (ctx, args) => {
-    const { viewer, patient } = await resolveDashboardPatient(ctx);
+    const { viewer, patient } = await requireHardwareLabOperator(ctx);
     if (!patient.isSynthetic) throw new ConvexError("Demo windows are limited to synthetic patients");
     if (
       !Number.isInteger(args.upcomingWindowMinutes) ||
@@ -93,7 +93,7 @@ export const configureDemoWindows = mutation({
 export const runDemoScenario = mutation({
   args: { scenario: scenarioValidator },
   handler: async (ctx, args) => {
-    const { viewer, patient } = await resolveDashboardPatient(ctx);
+    const { viewer, patient } = await requireHardwareLabOperator(ctx);
     if (!patient.isSynthetic) throw new ConvexError("Reminder demo mode is limited to synthetic patients");
     const schedules = await ctx.db
       .query("medicationSchedules")
@@ -159,7 +159,7 @@ export const runDemoScenario = mutation({
 export const resetDemoScenarios = mutation({
   args: {},
   handler: async (ctx) => {
-    const { patient } = await resolveDashboardPatient(ctx);
+    const { patient } = await requireHardwareLabOperator(ctx);
     if (!patient.isSynthetic) throw new ConvexError("Reminder demo reset is limited to synthetic patients");
     const now = Date.now();
     const runs = await ctx.db

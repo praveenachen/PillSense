@@ -1,8 +1,8 @@
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
-  title: "Developer / Hardware Lab",
-  description: "Internal PillSense hardware, simulation, and camera controls.",
+  title: "Hardware Lab · PillSense",
+  description: "Authorized internal Arduino, diagnostics, simulation, and local camera controls.",
 };
 
 export default function HardwareLabPage() {

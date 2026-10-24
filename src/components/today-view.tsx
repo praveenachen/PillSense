@@ -1,6 +1,6 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { useId, type ReactNode } from "react";
 import { DispenserVisual, type DispenserTone } from "./dispenser-visual";
 import { BrandMark, Icon } from "./mobile-ui";
 import { compactDoseLine, countdownLabel, describeDose, timelineStateLabel, type TimelineRow, type TimelineState } from "../lib/today";
@@ -168,15 +168,19 @@ function TakenRing({ taken, total }: { taken: number; total: number }) {
 }
 
 /** Dark medication tile with a capsule glyph. Decorative: it is not a photo of the real pill. */
-function PillTile() {
+export function PillTile() {
+  // Unique gradient ids: every tab stays mounted, and a gradient defined inside a hidden tab does not resolve.
+  const id = useId().replaceAll(":", "");
+  const teal = `${id}-teal`;
+  const violet = `${id}-violet`;
   return (
     <span aria-hidden="true" className="grid size-11 shrink-0 place-items-center rounded-pd-chip border border-pd-accent-soft/40 bg-gradient-to-br from-[#3a3797] to-[#12163f] shadow-[0_0_18px_rgba(119,116,255,0.55),0_0_6px_rgba(94,234,212,0.35)]">
       <svg viewBox="0 0 40 40" className="size-7 drop-shadow-[0_0_6px_rgba(163,161,255,0.9)]">
         <defs>
-          <linearGradient id="pd-pill" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stopColor="#7ee8d4" /><stop offset="1" stopColor="#5eead4" /></linearGradient>
-          <linearGradient id="pd-pill-b" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stopColor="#8b8cff" /><stop offset="1" stopColor="#c084fc" /></linearGradient>
+          <linearGradient id={teal} x1="0" y1="0" x2="1" y2="0"><stop offset="0" stopColor="#7ee8d4" /><stop offset="1" stopColor="#5eead4" /></linearGradient>
+          <linearGradient id={violet} x1="0" y1="0" x2="1" y2="0"><stop offset="0" stopColor="#8b8cff" /><stop offset="1" stopColor="#c084fc" /></linearGradient>
         </defs>
-        <g transform="rotate(-40 20 20)"><rect x="4" y="12.5" width="32" height="15" rx="7.5" fill="url(#pd-pill)" /><path d="M20 12.5h8.5a7.5 7.5 0 0 1 0 15H20Z" fill="url(#pd-pill-b)" /><rect x="8" y="15" width="12" height="2.5" rx="1.25" fill="#fff" opacity="0.7" /></g>
+        <g transform="rotate(-40 20 20)"><rect x="4" y="12.5" width="32" height="15" rx="7.5" fill={`url(#${teal})`} /><path d="M20 12.5h8.5a7.5 7.5 0 0 1 0 15H20Z" fill={`url(#${violet})`} /><rect x="8" y="15" width="12" height="2.5" rx="1.25" fill="#fff" opacity="0.7" /></g>
       </svg>
     </span>
   );

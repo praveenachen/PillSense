@@ -24,6 +24,8 @@ export type VisionObservation = {
 export type VisionSnapshot = {
   sessionId: string;
   status: LocalSessionStatus;
+  cameraIndex?: number;
+  previewAvailable?: boolean;
   events: VisionObservation[];
 };
 
@@ -47,7 +49,19 @@ export function parseVisionSnapshot(value: unknown): VisionSnapshot {
     ) throw new Error("Invalid vision event");
     return event as VisionObservation;
   });
-  return { sessionId: data.sessionId, status: data.status as LocalSessionStatus, events };
+  if (data.cameraIndex !== undefined && (!Number.isInteger(data.cameraIndex) || Number(data.cameraIndex) < 0)) {
+    throw new Error("Invalid vision camera index");
+  }
+  if (data.previewAvailable !== undefined && typeof data.previewAvailable !== "boolean") {
+    throw new Error("Invalid vision preview state");
+  }
+  return {
+    sessionId: data.sessionId,
+    status: data.status as LocalSessionStatus,
+    ...(typeof data.cameraIndex === "number" ? { cameraIndex: data.cameraIndex } : {}),
+    ...(typeof data.previewAvailable === "boolean" ? { previewAvailable: data.previewAvailable } : {}),
+    events,
+  };
 }
 
 export function createVisionSessionId() {

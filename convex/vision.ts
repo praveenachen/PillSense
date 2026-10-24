@@ -1,6 +1,6 @@
 import { ConvexError, v } from "convex/values";
 import { mutation, query } from "./_generated/server";
-import { requireAppUser, resolveDashboardPatient } from "./lib/authorization";
+import { requireHardwareLabOperator, resolveDashboardPatient } from "./lib/authorization";
 
 const source = v.literal("WINDOWS_OPENCV_MEDIAPIPE");
 const eventType = v.union(
@@ -35,7 +35,7 @@ export const beginSession = mutation({
     validateExternalId(args.sessionId, "Session ID");
     const now = Date.now();
     validateTimestamp(args.startedAt, now, "Start time");
-    const { viewer, patient } = await resolveDashboardPatient(ctx);
+    const { viewer, patient } = await requireHardwareLabOperator(ctx);
     const existing = await ctx.db
       .query("cameraObservationSessions")
       .withIndex("by_sessionId", (q) => q.eq("sessionId", args.sessionId))
@@ -86,7 +86,7 @@ export const recordEvent = mutation({
   handler: async (ctx, args) => {
     validateExternalId(args.sessionId, "Session ID");
     validateExternalId(args.eventId, "Event ID");
-    const viewer = await requireAppUser(ctx);
+    const { viewer } = await requireHardwareLabOperator(ctx);
     const session = await ctx.db
       .query("cameraObservationSessions")
       .withIndex("by_sessionId", (q) => q.eq("sessionId", args.sessionId))
@@ -143,7 +143,7 @@ export const recordEvent = mutation({
 export const closeSession = mutation({
   args: { sessionId: v.string(), status: finalStatus, endedAt: v.number() },
   handler: async (ctx, args) => {
-    const viewer = await requireAppUser(ctx);
+    const { viewer } = await requireHardwareLabOperator(ctx);
     const session = await ctx.db
       .query("cameraObservationSessions")
       .withIndex("by_sessionId", (q) => q.eq("sessionId", args.sessionId))

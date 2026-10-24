@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useMemo, useRef, useState } from "react";
 import { DispenserVisual, type DispenserTone } from "./dispenser-visual";
 import { Icon, type IconName } from "./mobile-ui";
@@ -137,9 +136,7 @@ export function DispenserView({ medications, device, selectedSlot, onSelectSlot,
                   <button type="button" disabled={locked || firstEmptySlot === null} onClick={() => firstEmptySlot !== null && selectSlot(firstEmptySlot)} className={cls}>{body}</button>
                 ) : locked ? (
                   <span aria-disabled="true" className={cls}>{body}</span>
-                ) : (
-                  <Link href="/hardware-lab" className={cls}>{body}</Link>
-                )}
+                ) : <span title="Operator-only setup is available outside patient navigation" className={cls}>{body}</span>}
                 {index < steps.length - 1 && <span aria-hidden="true" className={`mt-[1.65rem] h-0.5 flex-1 rounded-full transition-colors duration-300 ${lineOn ? "bg-gradient-to-r from-pd-ok/70 to-pd-ok/40" : "bg-pd-line"}`} />}
               </li>
             );

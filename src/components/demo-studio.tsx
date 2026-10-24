@@ -5,7 +5,7 @@ import { Suspense, useCallback, useRef, useState, type ReactNode } from "react";
 import { AuthControls } from "./auth-controls";
 import { DemoCarePanel } from "./demo-care-panel";
 import { DispenserScreen } from "./dispenser-screen";
-import { BrandMark, Icon, ScreenHeader, type IconName } from "./mobile-ui";
+import { BrandMark, Icon, type IconName } from "./mobile-ui";
 import { PatientNav } from "./patient-nav";
 import { ScheduleScreen } from "./schedule-screen";
 import { SetupSheet } from "./setup-sheet";
@@ -28,13 +28,10 @@ export function DemoStudio({ authUiConfigured }: { authUiConfigured: boolean }) 
   const goSchedule = useCallback(() => selectTab("schedule"), [selectTab]);
   const goVoice = useCallback(() => selectTab("voice"), [selectTab]);
 
-  const account = (icon: IconName = "gear") => (
-    <AccountMenu authUiConfigured={authUiConfigured} icon={icon} />
-  );
   const todayAccount = () => (
     <AccountMenu authUiConfigured={authUiConfigured} icon="user" dark />
   );
-  const isDarkPatientScreen = activeTab === "today" || activeTab === "dispenser" || activeTab === "voice" || activeTab === "schedule";
+  const isDarkPatientScreen = activeTab === "today" || activeTab === "dispenser" || activeTab === "voice" || activeTab === "schedule" || activeTab === "care";
 
   return (
     <main className="min-h-screen overflow-hidden bg-[radial-gradient(120%_90%_at_20%_0%,#14405a_0%,#0b2233_55%,#08141f_100%)] text-[#0f172a]">
@@ -63,15 +60,12 @@ export function DemoStudio({ authUiConfigured }: { authUiConfigured: boolean }) 
             <Link href="/patient" className="rounded-full border border-white/20 px-4 py-2.5 text-white/80 hover:border-white/40">Full patient view</Link>
             <Link href="/caregiver" className="rounded-full border border-white/20 px-4 py-2.5 text-white/80 hover:border-white/40">Caregiver view</Link>
           </div>
-          <Link href="/hardware-lab" className="mt-4 inline-flex items-center gap-2 text-xs font-semibold text-white/55 transition-colors hover:text-white">
-            Internal · Developer / Hardware Lab <Icon name="chevron" size={14} />
-          </Link>
         </aside>
 
         <section aria-label="PillSense mobile web preview" className={`${isDarkPatientScreen ? "pd-canvas" : "ps-canvas"} relative mx-auto flex h-[min(858px,calc(100dvh-2rem))] min-h-[620px] w-[min(404px,calc(100vw-1.5rem))] flex-col overflow-hidden rounded-[2.8rem] border-[7px] border-[#0f1b26] shadow-[0_30px_90px_rgba(0,0,0,0.55)]`}>
           <div aria-hidden="true" className="absolute left-1/2 top-2 z-30 h-6 w-28 -translate-x-1/2 rounded-full bg-[#0f1b26]" />
 
-          <section ref={scrollAreaRef} inert={setupOpen} className={`demo-mobile-scroll min-h-0 flex-1 overflow-y-auto overscroll-contain [&>#demo-panel-voice]:min-h-full [&>#demo-panel-voice.block]:flex [&>#demo-panel-voice.block]:flex-col ${isDarkPatientScreen ? "px-5" : "px-4"} pb-10 pt-11`}>
+          <section ref={scrollAreaRef} inert={setupOpen} className={`demo-mobile-scroll min-h-0 flex-1 overflow-y-auto overscroll-contain [&>#demo-panel-voice]:min-h-full [&>#demo-panel-voice.block]:flex [&>#demo-panel-voice.block]:flex-col [&>#demo-panel-care]:min-h-full [&>#demo-panel-care.block]:flex [&>#demo-panel-care.block]:flex-col ${isDarkPatientScreen ? "px-5" : "px-4"} pb-10 pt-11`}>
             {panels.map((panel) => (
               <div
                 key={panel.id}
@@ -99,10 +93,7 @@ export function DemoStudio({ authUiConfigured }: { authUiConfigured: boolean }) 
                   authUiConfigured ? <ScheduleScreen /> : <ConfigurationRequired dark />
                 )}
                 {panel.id === "care" && (
-                  <div>
-                    <ScreenHeader title="Caregiver" subtitle="Shown only when authorized" right={account("people")} />
-                    {authUiConfigured ? <DemoCarePanel /> : <ConfigurationRequired />}
-                  </div>
+                  authUiConfigured ? <DemoCarePanel account={todayAccount()} /> : <ConfigurationRequired dark />
                 )}
               </div>
             ))}

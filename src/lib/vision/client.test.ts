@@ -21,7 +21,22 @@ describe("local vision client", () => {
     await client.stop("vision_session_01");
     expect(fetchMock).toHaveBeenCalledTimes(4);
     expect(new Headers(fetchMock.mock.calls[1][1]?.headers).get("X-PillSense-Vision-Capability")).toBe("short-lived-token");
+    expect(JSON.parse(String(fetchMock.mock.calls[1][1]?.body))).toMatchObject({ sessionId: "vision_session_01", cameraIndex: 0 });
     expect(String(fetchMock.mock.calls[2][0])).toContain("after=vision_event_00");
+  });
+
+  it("reads a session-scoped JPEG preview with the same capability", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response({ capabilityToken: "preview-token" }))
+      .mockResolvedValueOnce(response({ sessionId: "vision_session_03", status: "ACTIVE", events: [] }))
+      .mockResolvedValueOnce(new Response(new Blob(["jpeg"]), { status: 200, headers: { "Content-Type": "image/jpeg" } }));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new LocalVisionClient("http://127.0.0.1:8101");
+    await client.start("vision_session_03", 2);
+    const preview = await client.preview("vision_session_03");
+    expect(preview?.type).toBe("image/jpeg");
+    expect(new Headers(fetchMock.mock.calls[2][1]?.headers).get("X-PillSense-Vision-Capability")).toBe("preview-token");
+    expect(String(fetchMock.mock.calls[2][0])).toContain("preview.jpg");
   });
 
   it("reports an unavailable local service", async () => {

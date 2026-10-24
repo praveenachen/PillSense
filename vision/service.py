@@ -9,7 +9,7 @@ import secrets
 import threading
 import time
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -55,6 +55,7 @@ class Settings:
 
 class StartBody(BaseModel):
     sessionId: str = Field(pattern=r"^[A-Za-z0-9_-]{8,64}$")
+    cameraIndex: int | None = Field(default=None, ge=0, le=8)
 
 
 class CapabilityRegistry:
@@ -156,7 +157,7 @@ def create_app(
         validated = capabilities.require(token)
         capabilities.bind(validated, body.sessionId)
         try:
-            return active_manager.start(body.sessionId)
+            return active_manager.start(body.sessionId, body.cameraIndex)
         except CameraBusyError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
 
@@ -176,6 +177,24 @@ def create_app(
             }
         except SessionNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.get("/v1/sessions/{session_id}/preview.jpg", dependencies=[Depends(require_origin)])
+    def session_preview(
+        session_id: str,
+        token: str | None = Depends(capability_header),
+    ) -> Response:
+        capabilities.require(token, session_id)
+        try:
+            preview = active_manager.preview(session_id)
+        except SessionNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        if preview is None:
+            return Response(status_code=204, headers={"Cache-Control": "no-store"})
+        return Response(
+            content=preview,
+            media_type="image/jpeg",
+            headers={"Cache-Control": "no-store, max-age=0"},
+        )
 
     @app.post("/v1/sessions/{session_id}/stop", dependencies=[Depends(require_origin)])
     def stop_session(

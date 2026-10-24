@@ -21,6 +21,7 @@ import type * as demo from "../demo.js";
 import type * as device from "../device.js";
 import type * as deviceIssues from "../deviceIssues.js";
 import type * as dispensing from "../dispensing.js";
+import type * as hardwareLab from "../hardwareLab.js";
 import type * as http from "../http.js";
 import type * as lib_agentRunCreation from "../lib/agentRunCreation.js";
 import type * as lib_authorization from "../lib/authorization.js";
@@ -58,6 +59,7 @@ declare const fullApi: ApiFromModules<{
   device: typeof device;
   deviceIssues: typeof deviceIssues;
   dispensing: typeof dispensing;
+  hardwareLab: typeof hardwareLab;
   http: typeof http;
   "lib/agentRunCreation": typeof lib_agentRunCreation;
   "lib/authorization": typeof lib_authorization;

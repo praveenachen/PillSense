@@ -89,3 +89,18 @@ export async function resolveDashboardPatient(ctx: DatabaseContext) {
 
   return { viewer, patient };
 }
+
+export async function requireHardwareLabOperator(ctx: DatabaseContext) {
+  const viewer = await requireAppUser(ctx);
+  if (viewer.role !== "caregiver") throw new ConvexError("Hardware Lab caregiver access required");
+  const relationships = await ctx.db
+    .query("careRelationships")
+    .withIndex("by_caregiver", (q) => q.eq("caregiverId", viewer._id))
+    .collect();
+  for (const relationship of relationships) {
+    if (relationship.status !== "active") continue;
+    const patient = await ctx.db.get("appUsers", relationship.patientId);
+    if (patient?.role === "patient" && patient.isSynthetic) return { viewer, patient, relationship };
+  }
+  throw new ConvexError("Hardware Lab synthetic patient access required");
+}

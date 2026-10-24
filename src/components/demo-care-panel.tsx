@@ -1,218 +1,145 @@
 "use client";
 
 import Link from "next/link";
-import { useConvexAuth, useQuery } from "convex/react";
-import { useState, type ReactNode } from "react";
+import { useConvexAuth, useMutation, useQuery } from "convex/react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { api } from "../../convex/_generated/api";
 import { AuthRequired } from "./auth-required";
 import { reasonLabels, type CareCaseItem } from "./caregiver-alerts";
-import { CaregiverDeviceIssues } from "./caregiver-device-issues";
 import { CaseInvestigationDetail } from "./case-investigation-detail";
-import { Avatar, Icon, SectionTitle, StatusPill, type IconName } from "./mobile-ui";
+import { DeviceStatusCard, NeedsAttentionCard, RefillStatusCard } from "./care-cards";
+import { Icon } from "./mobile-ui";
+import { caregiverActivityLabel, caregiverActivityState, caregiverNextAction, dedupeCaregiverActivity, getCareProgress, pickPriorityCase, type CaregiverActivityState } from "@/lib/care-dashboard";
 
-type CareTab = "overview" | "investigations" | "medications";
-const tabs: Array<{ id: CareTab; label: string }> = [
-  { id: "overview", label: "Overview" },
-  { id: "investigations", label: "Investigations" },
-  { id: "medications", label: "Medications" },
-];
+type CareTab = "overview" | "activity";
+type SetupMedication = { medicationId: string; name: string; slot: number; localTime: string; demoInventory: number; instructions: string | null };
 
-export function DemoCarePanel() {
+export function DemoCarePanel({ account }: { account?: ReactNode }) {
   const auth = useConvexAuth();
   const setup = useQuery(api.caregiver.setup, auth.isAuthenticated ? {} : "skip");
 
-  if (auth.isLoading) {
-    return <CareState title="Checking caregiver access…">Confirming the Clerk and Convex session.</CareState>;
-  }
-  if (!auth.isAuthenticated) {
-    return <AuthRequired message="Caregiver content is private and requires an authenticated Convex session." />;
-  }
-  if (setup === undefined) {
-    return <CareState title="Loading care workspace…">Checking the authenticated caregiver role.</CareState>;
-  }
+  if (auth.isLoading) return <CareShell account={account}><CareState title="Checking access…">Confirming the Clerk and Convex session.</CareState></CareShell>;
+  if (!auth.isAuthenticated) return <CareShell account={account}><AuthRequired dark message="Care information is private and requires an authenticated Convex session." /></CareShell>;
+  if (setup === undefined) return <CareShell account={account}><CareState title="Loading care workspace…">Checking your server-authorized role and relationships.</CareState></CareShell>;
+  if (setup.status === "unauthorized") return <PatientCare account={account} />;
   if (setup.status !== "ready") {
-    return (
-      <CareState title="Caregiver access required">
-        This mobile preview does not grant or infer caregiver access. Use the protected caregiver
-        workspace for explicit synthetic onboarding.
-      </CareState>
-    );
+    return <CareShell account={account}><CareState title="Care access restricted">No authorized care relationship is available for this account. The Care tab never grants access by changing a screen or role label.</CareState></CareShell>;
   }
-  return <AuthorizedCare patientName={setup.patient.displayName} medications={setup.medications} />;
+  return <AuthorizedCare account={account} patientName={setup.patient.displayName} medications={setup.medications} />;
 }
 
-type SetupMedication = { medicationId: string; name: string; slot: number; localTime: string; demoInventory: number; instructions: string | null };
+function CareShell({ account, children }: { account?: ReactNode; children: ReactNode }) {
+  return <div className="flex flex-1 flex-col gap-4 text-pd-text"><header className="flex min-h-11 items-center justify-between"><h1 className="text-[1.4rem] font-semibold tracking-tight">Caregiver</h1>{account}</header>{children}</div>;
+}
 
-function AuthorizedCare({ patientName, medications }: { patientName: string; medications: SetupMedication[] }) {
+function PatientCare({ account }: { account?: ReactNode }) {
+  const dashboard = useQuery(api.patient.dashboard);
+  return (
+    <CareShell account={account}>
+      <div className="pd-card-hero p-5">
+        <span className="grid size-10 place-items-center rounded-full bg-pd-accent/15 text-pd-accent-soft"><Icon name="shield" size={20} /></span>
+        <h2 className="mt-4 text-lg font-semibold">Caregiver relationships</h2>
+        <p className="mt-2 text-sm leading-6 text-pd-muted">Only caregivers linked through an active, server-authorized relationship can view your medication support data.</p>
+        <div className="mt-4 rounded-2xl border border-white/8 bg-white/[0.025] p-3">
+          <p className="text-sm font-medium">{dashboard?.status === "ready" ? dashboard.patientName : "Patient account"}</p>
+          <p className="mt-1 text-xs leading-5 text-pd-muted">Caregiver identity details are not exposed by the current patient API. Manage the synthetic demo relationship in the protected caregiver workspace.</p>
+        </div>
+        <Link href="/caregiver" className="pd-focus pd-press mt-4 flex min-h-11 items-center justify-center rounded-full border border-white/10 bg-white/[0.04] px-4 text-sm font-semibold">Open care relationship setup</Link>
+      </div>
+    </CareShell>
+  );
+}
+
+function AuthorizedCare({ account, patientName, medications }: { account?: ReactNode; patientName: string; medications: SetupMedication[] }) {
   const [tab, setTab] = useState<CareTab>("overview");
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [now] = useState(() => Date.now());
+  const ensureShowcase = useMutation(api.demo.ensureDashboardShowcase);
+  const showcaseRequested = useRef(false);
   const cases = useQuery(api.careCases.listForCaregiver);
   const issues = useQuery(api.deviceIssues.listForCaregiver);
   const activity = useQuery(api.activity.latestForCaregiver);
+  const occurrences = useQuery(api.occurrences.listForPatient, { now });
+  const refills = useQuery(api.refills.listForCaregiver);
 
-  if (cases === undefined) return <CareState title="Loading care cases…">Reading server-authorized alerts.</CareState>;
-  const caseList: CareCaseItem[] = cases.status === "ready" ? cases.cases : [];
+  useEffect(() => {
+    if (showcaseRequested.current) return;
+    showcaseRequested.current = true;
+    const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+    void ensureShowcase({ timezone }).catch(() => undefined);
+  }, [ensureShowcase]);
+
+  if (cases === undefined || issues === undefined || activity === undefined || occurrences === undefined || refills === undefined) {
+    return <CareShell account={account}><CareState title="Loading care overview…">Listening for authorized case, schedule, and supply updates.</CareState></CareShell>;
+  }
+  if (cases.status !== "ready" || issues.status !== "ready" || activity.status !== "ready" || refills.status !== "ready") {
+    return <CareShell account={account}><CareState title="Care access restricted">Convex did not authorize this account to read the selected patient’s care data.</CareState></CareShell>;
+  }
+
+  const caseList: CareCaseItem[] = cases.cases;
   const selected = selectedId ? caseList.find((item) => item.id === selectedId) ?? null : null;
-  const open = caseList.filter((item) => item.status === "OPEN");
-  const acknowledged = caseList.filter((item) => item.status === "ACKNOWLEDGED");
-  const focus = open[0] ?? acknowledged[0] ?? null;
-  const issueList = issues?.status === "ready" ? issues.issues : [];
-  const dispenseList = activity?.status === "ready" ? activity.activity : [];
+  const focus = pickPriorityCase(caseList);
+  const unresolved = caseList.filter((item) => item.status !== "RESOLVED");
+  const progress = getCareProgress(occurrences.occurrences, now);
+  const refill = [...refills.cases].sort((a, b) => (a.forecast.estimatedDaysRemaining ?? 9999) - (b.forecast.estimatedDaysRemaining ?? 9999))[0] ?? null;
+  type FeedItem = { key: string; at: number; title: string; medicationName: string; nextAction: string; state: CaregiverActivityState; caseId?: string };
+  const rawFeed: FeedItem[] = [
+    ...caseList.map((item): FeedItem => ({
+      key: `case:${item.id}`,
+      at: item.updatedAt,
+      title: item.investigationStatus === "COMPLETED" && item.status !== "RESOLVED" ? "Investigation findings ready" : caregiverCaseTitle(item.triggerReason),
+      medicationName: item.medicationName,
+      nextAction: caregiverNextAction(item),
+      state: caregiverActivityState(item),
+      caseId: item.id,
+    })),
+    ...issues.issues.map((item): FeedItem => ({ key: `issue:${item._id}`, at: item.createdAt, title: "Device issue reported", medicationName: "PillSense dispenser", nextAction: "Review device report", state: "NEEDS_ATTENTION" })),
+    ...activity.activity.filter((item) => item.requiresReview).map((item): FeedItem => ({ key: `activity:${item.commandId}`, at: item.updatedAt, title: "Hardware outcome needs review", medicationName: item.medicationName, nextAction: "Review device evidence", state: "NEEDS_ATTENTION" })),
+  ].sort((a, b) => b.at - a.at);
+  const feed = dedupeCaregiverActivity(rawFeed);
 
-  type FeedItem = { key: string; at: number; icon: IconName; tone: "coral" | "teal" | "mist"; title: string; detail: string; caseId?: string };
-  const feed: FeedItem[] = [
-    ...caseList.map((item): FeedItem => ({ key: `case:${item.id}`, at: item.updatedAt, icon: "alert", tone: item.status === "OPEN" ? "coral" : "teal", title: reasonLabels[item.triggerReason], detail: `${item.medicationName} · ${item.status.toLowerCase()}`, caseId: item.id })),
-    ...issueList.map((issue): FeedItem => ({ key: `issue:${issue._id}`, at: issue.createdAt, icon: "chat", tone: "mist", title: "Patient reported a device issue", detail: `“${issue.transcript}”` })),
-    ...dispenseList.map((item): FeedItem => ({ key: `dispense:${item.commandId}`, at: item.updatedAt, icon: "pill", tone: item.requiresReview ? "coral" : "teal", title: `${item.medicationName} · simulated dispense`, detail: `Motor: ${String(item.motorCompletion).toLowerCase()} · ingestion not verified` })),
-  ].sort((a, b) => b.at - a.at).slice(0, 5);
-
-  function openCase(id: string) { setTab("investigations"); setSelectedId(id); }
+  const openCase = (id: string) => { setTab("activity"); setSelectedId(id); };
+  const progressLabel = progress.state === "ON_TRACK" ? "On track" : progress.state === "ACTION_NEEDED" ? "Action needed" : progress.state === "AWAITING_REPORTS" ? "Awaiting reports" : "No doses today";
 
   return (
-    <div className="space-y-3">
-      <section className="ps-card flex items-center gap-3 px-3 py-2.5">
-        <Avatar name={patientName} size={42} />
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-[0.95rem] font-semibold text-[#0f172a]">{patientName}</p>
-          <p className="text-xs text-[#64748b]">{cases.status === "ready" && caseList.length > 0 ? "Authorized care relationship" : "Authorized care relationship · no unresolved cases"}</p>
-        </div>
-      </section>
-
-      <div role="tablist" aria-label="Care sections" className="grid grid-cols-3 border-b border-[#dbe7f3]/80">
-        {tabs.map((item) => (
-          <button key={item.id} type="button" role="tab" id={`care-tab-${item.id}`} aria-selected={tab === item.id} aria-controls="care-tabpanel" onClick={() => { setTab(item.id); setSelectedId(null); }} className={`ps-focus min-h-11 border-b-2 text-[0.8rem] ${tab === item.id ? "border-[#0f766e] font-semibold text-[#0f172a]" : "border-transparent font-medium text-[#64748b]"}`}>
-            {item.label}
-          </button>
-        ))}
+    <CareShell account={account}>
+      <div role="tablist" aria-label="Care sections" className="grid grid-cols-2 rounded-full border border-white/8 bg-white/[0.035] p-1">
+        {(["overview", "activity"] as const).map((id) => <button key={id} type="button" role="tab" aria-selected={tab === id} onClick={() => { setTab(id); setSelectedId(null); }} className={`pd-focus min-h-9 rounded-full text-xs font-semibold capitalize transition ${tab === id ? "bg-white/10 text-white shadow-sm" : "text-pd-muted"}`}>{id}</button>)}
       </div>
 
-      <div id="care-tabpanel" role="tabpanel" aria-labelledby={`care-tab-${tab}`} className="space-y-3">
-        {tab === "overview" && (
-          <>
-            {focus ? (
-              <section aria-labelledby="attention-title" className={`rounded-2xl border p-3.5 ${focus.status === "OPEN" ? "border-[#f6d3d3] bg-gradient-to-b from-[#fff4f3] to-white" : "ps-card"}`}>
-                <div className="flex items-center justify-between gap-2">
-                  <h3 id="attention-title" className="flex items-center gap-2 text-sm font-semibold text-[#a32020]"><span aria-hidden="true" className="grid size-7 place-items-center rounded-full bg-[#ef4444] text-white"><Icon name="alert" size={15} strokeWidth={2.2} /></span>{focus.status === "OPEN" ? "Needs attention" : "Acknowledged"}</h3>
-                  <StatusPill tone={focus.status === "OPEN" ? "coral" : "amber"}>{focus.status === "OPEN" ? "Unresolved" : "In follow-up"}</StatusPill>
-                </div>
-                <p className="ps-display mt-2.5 text-[1.05rem] font-bold leading-tight text-[#0f172a]">{reasonLabels[focus.triggerReason]}</p>
-                <p className="mt-0.5 text-sm text-[#475569]">{focus.medicationName} · due {new Date(focus.dueAt).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</p>
-                <p className="mt-1.5 text-[0.82rem] leading-5 text-[#334155]">{focus.recommendation}</p>
-                <button type="button" onClick={() => openCase(focus.id)} className="ps-cta-danger ps-focus mt-3 flex min-h-12 w-full items-center justify-center gap-2 rounded-full px-5 text-[0.95rem] font-semibold">
-                  View investigation <Icon name="arrow" size={18} />
-                </button>
-              </section>
-            ) : (
-              <section className="ps-card p-4">
-                <p className="flex items-center gap-2 text-sm font-semibold text-[#0f766e]"><Icon name="shield" size={18} /> No unresolved care cases</p>
-                <p className="mt-1 text-sm leading-6 text-[#475569]">New cases appear here when a dose has no patient response, a motor outcome is unknown, or a device issue is reported.</p>
-              </section>
-            )}
+      {tab === "overview" && <div className="flex flex-1 flex-col gap-3">
+        <section className="pd-card-hero flex flex-1 flex-col justify-center gap-4 p-5">
+          <div className="flex items-center justify-between gap-4">
+            <div className="min-w-0"><p className="truncate text-xl font-semibold">{patientName}</p><p className={`mt-1.5 text-sm font-medium ${progress.state === "ACTION_NEEDED" ? "text-[#ffb7ad]" : "text-pd-ok"}`}>{progressLabel}</p><p className="mt-3 text-sm text-pd-muted">{progress.taken} of {progress.total} doses explicitly reported taken</p></div>
+            <ProgressRing percent={progress.percent} />
+          </div>
+        </section>
 
-            <section aria-label="Case summary" className="ps-card grid grid-cols-3 divide-x divide-[#e6eef6] py-2.5 text-center">
-              <Stat value={open.length} label="Unresolved cases" tone={open.length > 0 ? "text-[#c92a2a]" : "text-[#0f766e]"} />
-              <Stat value={acknowledged.length} label="In follow-up" tone="text-[#8a5a00]" />
-              <Stat value={issueList.length} label="Device reports" tone="text-[#1e4f8a]" />
-            </section>
+        {focus ? <NeedsAttentionCard item={focus} count={unresolved.length} onOpen={() => openCase(focus.id)} /> : <section className="pd-card p-4"><h2 className="text-lg font-semibold">Needs attention</h2><p className="mt-3 flex items-center gap-2 text-sm font-semibold text-pd-ok"><Icon name="check" size={18} /> Nothing needs attention</p><p className="mt-2 text-xs leading-5 text-pd-muted">Care cases appear only when recorded evidence needs caregiver follow-up.</p></section>}
 
-            <section aria-labelledby="care-activity-title" className="space-y-1.5">
-              <SectionTitle><span id="care-activity-title">Recent activity</span></SectionTitle>
-              {feed.length === 0 ? (
-                <p className="ps-card p-4 text-sm text-[#475569]">No recent care activity.</p>
-              ) : (
-                <ul className="ps-card divide-y divide-[#e6eef6]">
-                  {feed.map((entry) => {
-                    const body = (
-                      <>
-                        <span aria-hidden="true" className={`grid size-8 shrink-0 place-items-center rounded-full ${entry.tone === "coral" ? "bg-[#fde4e4] text-[#b42323]" : entry.tone === "teal" ? "bg-[#d9f5ef] text-[#0f766e]" : "bg-[#e3efff] text-[#1e4f8a]"}`}><Icon name={entry.icon} size={17} /></span>
-                        <span className="min-w-0 flex-1">
-                          <span className="block text-[0.7rem] text-[#64748b]">{new Date(entry.at).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</span>
-                          <span className="block truncate text-sm font-semibold text-[#0f172a]">{entry.title}</span>
-                          <span className="block truncate text-xs text-[#64748b]">{entry.detail}</span>
-                        </span>
-                        {entry.caseId && <Icon name="chevron" size={16} className="shrink-0 text-[#94a3b8]" />}
-                      </>
-                    );
-                    return (
-                      <li key={entry.key}>
-                        {entry.caseId
-                          ? <button type="button" onClick={() => openCase(entry.caseId!)} className="ps-focus flex min-h-14 w-full items-center gap-3 px-3 py-2 text-left">{body}</button>
-                          : <div className="flex min-h-14 items-center gap-3 px-3 py-2">{body}</div>}
-                      </li>
-                    );
-                  })}
-                </ul>
-              )}
-            </section>
-          </>
-        )}
+        <RefillStatusCard medicationName={refill?.medicationName ?? null} daysLeft={refill?.forecast.estimatedDaysRemaining ?? null} />
 
-        {tab === "investigations" && (selected
-          ? <CaseInvestigationDetail key={selected.id} item={selected} onBack={() => setSelectedId(null)} />
-          : (
-            <>
-              {caseList.length === 0 ? (
-                <p className="ps-card p-4 text-sm leading-6 text-[#475569]">No care cases to investigate.</p>
-              ) : (
-                <ul className="ps-card divide-y divide-[#e6eef6]">
-                  {caseList.map((item) => (
-                    <li key={item.id}>
-                      <button type="button" onClick={() => setSelectedId(item.id)} className="ps-focus flex min-h-16 w-full items-center gap-3 p-3 text-left">
-                        <span className="min-w-0 flex-1">
-                          <span className="block truncate text-sm font-semibold text-[#0f172a]">{reasonLabels[item.triggerReason]}</span>
-                          <span className="block truncate text-xs text-[#64748b]">{item.medicationName} · investigation {item.investigationStatus.replaceAll("_", " ").toLowerCase()}</span>
-                        </span>
-                        <StatusPill tone={item.status === "OPEN" ? "coral" : item.status === "ACKNOWLEDGED" ? "amber" : "green"}>{item.status.charAt(0) + item.status.slice(1).toLowerCase()}</StatusPill>
-                        <Icon name="chevron" size={16} className="shrink-0 text-[#94a3b8]" />
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-              <CaregiverDeviceIssues />
-              <Link href="/agent-activity" className="ps-card ps-focus flex min-h-12 items-center justify-between px-4 text-sm font-semibold text-[#0f766e]">Open full agent activity <Icon name="chevron" size={16} /></Link>
-            </>
-          ))}
+        <DeviceStatusCard device={occurrences.device} medicationCount={medications.length} />
 
-        {tab === "medications" && (
-          <>
-            {medications.length === 0 ? (
-              <p className="ps-card p-4 text-sm leading-6 text-[#475569]">No medications are assigned yet.</p>
-            ) : (
-              <ul className="ps-card divide-y divide-[#e6eef6]">
-                {medications.map((m) => (
-                  <li key={m.medicationId} className="flex items-center gap-3 p-3">
-                    <span aria-hidden="true" className="grid size-9 shrink-0 place-items-center rounded-full bg-[#d9f5ef] text-sm font-bold text-[#0f766e]">{m.slot}</span>
-                    <span className="min-w-0 flex-1"><span className="block truncate text-sm font-semibold text-[#0f172a]">{m.name}</span><span className="block text-xs text-[#64748b]">{m.localTime} · demo inventory {m.demoInventory} inert {m.demoInventory === 1 ? "pill" : "pills"}</span></span>
-                  </li>
-                ))}
-              </ul>
-            )}
-            <Link href="/caregiver" className="ps-cta flex min-h-12 items-center justify-center rounded-full px-5 text-sm font-semibold">Manage medication setup</Link>
-          </>
-        )}
-      </div>
-    </div>
+      </div>}
+
+      {tab === "activity" && (selected ? <CaseInvestigationDetail item={selected} onBack={() => setSelectedId(null)} /> : <div className="space-y-3">
+        {feed.length === 0 ? <section className="pd-card p-4 text-sm text-pd-muted">No care activity yet.</section> : <ul className="pd-card divide-y divide-white/8 overflow-hidden">{feed.map((entry) => <li key={entry.key}>{entry.caseId ? <button type="button" onClick={() => setSelectedId(entry.caseId!)} className="pd-focus flex min-h-[5.5rem] w-full items-center gap-3 px-4 py-3 text-left"><ActivityDot state={entry.state} /><ActivityText entry={entry} /><Icon name="chevron" size={15} className="text-pd-muted" /></button> : <Link href="/caregiver" className="pd-focus flex min-h-[5.5rem] items-center gap-3 px-4 py-3"><ActivityDot state={entry.state} /><ActivityText entry={entry} /><Icon name="chevron" size={15} className="text-pd-muted" /></Link>}</li>)}</ul>}
+        {medications.length === 0 && <p className="text-center text-xs text-pd-muted">No active medication assignments.</p>}
+      </div>)}
+    </CareShell>
   );
 }
 
-function Stat({ value, label, tone }: { value: number; label: string; tone: string }) {
-  return (
-    <div className="px-1">
-      <p className={`ps-display text-[1.45rem] font-bold leading-none ${tone}`}>{value}</p>
-      <p className="mt-1 text-xs leading-4 text-[#64748b]">{label}</p>
-    </div>
-  );
+function ProgressRing({ percent }: { percent: number }) {
+  const angle = Math.max(0, Math.min(100, percent)) * 3.6;
+  return <div aria-label={`${percent}% reported taken`} className="grid size-24 shrink-0 place-items-center rounded-full" style={{ background: `conic-gradient(var(--color-pd-ok) ${angle}deg, rgba(255,255,255,.08) 0)` }}><div className="grid size-[4.75rem] place-items-center rounded-full bg-pd-surface text-lg font-bold">{percent}%</div></div>;
 }
+function ActivityDot({ state }: { state: CaregiverActivityState }) { return <span className={`size-2.5 shrink-0 rounded-full ${state === "NEEDS_ATTENTION" ? "bg-[#ff806e] shadow-[0_0_10px_rgba(255,128,110,.65)]" : state === "IN_PROGRESS" ? "bg-pd-accent shadow-[0_0_10px_rgba(119,116,255,.55)]" : "bg-pd-ok"}`} />; }
+function ActivityText({ entry }: { entry: { at: number; title: string; medicationName: string; nextAction: string; state: CaregiverActivityState } }) { return <span className="min-w-0 flex-1"><span className="block truncate text-sm font-semibold">{entry.title}</span><span className="mt-0.5 block truncate text-xs text-pd-muted">{entry.medicationName} · {entry.nextAction}</span><span className="mt-1 flex items-center gap-2 text-[0.65rem]"><span className={entry.state === "NEEDS_ATTENTION" ? "text-[#ffb7ad]" : entry.state === "IN_PROGRESS" ? "text-pd-accent-soft" : "text-pd-ok"}>{caregiverActivityLabel(entry.state)}</span><span className="text-pd-muted/70">· {formatDate(entry.at)}</span></span></span>; }
+function caregiverCaseTitle(reason: keyof typeof reasonLabels) { return reason === "NO_PATIENT_RESPONSE" ? "No response after scheduled dose" : reason === "PATIENT_REPORTED_NOT_TAKEN" ? "Patient reported dose not taken" : reason === "MOTOR_COMPLETED_INGESTION_UNCONFIRMED" ? "Dose confirmation needed" : reason === "MOTOR_OUTCOME_UNKNOWN" ? "Dispense outcome unclear" : "Device issue reported"; }
+function formatDate(value: number) { return new Date(value).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }); }
 
 function CareState({ title, children }: { title: string; children: ReactNode }) {
-  return (
-    <section className="ps-card p-5">
-      <h2 className="ps-display text-xl font-semibold text-[#0f172a]">{title}</h2>
-      <p className="mt-2 text-sm leading-6 text-[#475569]">{children}</p>
-      <Link href="/caregiver" className="ps-focus mt-4 inline-flex min-h-11 items-center rounded-full border border-[#cbd5e1] px-4 text-sm font-semibold text-[#0f172a]">
-        Open protected caregiver route
-      </Link>
-    </section>
-  );
+  return <section className="pd-card p-5"><h2 className="text-lg font-semibold">{title}</h2><div className="mt-2 text-sm leading-6 text-pd-muted">{children}</div><Link href="/caregiver" className="pd-focus mt-4 inline-flex min-h-10 items-center rounded-full border border-white/10 px-4 text-xs font-semibold">Open protected caregiver route</Link></section>;
 }

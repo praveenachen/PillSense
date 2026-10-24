@@ -23,6 +23,20 @@ describe("camera observations", () => {
     })).rejects.toThrow("Authentication required");
   });
 
+  it("requires an authorized synthetic caregiver operator", async () => {
+    const root = convexTest(schema, modules);
+    const patient = root.withIdentity({ tokenIdentifier: "issuer|vision-patient", name: "Patient" });
+    await root.run(async (ctx) => {
+      await ctx.db.insert("appUsers", {
+        tokenIdentifier: "issuer|vision-patient", displayName: "Patient", role: "patient",
+        isSynthetic: true, createdAt: Date.now(),
+      });
+    });
+    await expect(patient.mutation(api.vision.beginSession, {
+      sessionId: "vision_patient_01", startedAt: Date.now(),
+    })).rejects.toThrow("Hardware Lab caregiver access required");
+  });
+
   it("persists an idempotent non-clinical observation lifecycle", async () => {
     const { root, actor } = await setup();
     const careTeam = await actor.query(api.caregiver.setup, {});

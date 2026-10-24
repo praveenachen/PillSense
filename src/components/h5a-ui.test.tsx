@@ -265,7 +265,7 @@ describe("Voice Companion dark redesign", () => {
 
   it("keeps synthetic voice demo controls in Hardware Lab, not the patient view", () => {
     const view = source("voice-view.tsx");
-    const lab = source("persistent-arduino-lab.tsx");
+    const lab = source("hardware-lab-diagnostics.tsx");
     expect(view).not.toMatch(/Voice demo|synthetic record|Start 60-second|supervised mock dispensing/i);
     expect(lab).toContain("Voice demo · synthetic controls");
     expect(lab).toContain("<VoiceDeveloperPanel");
@@ -388,11 +388,12 @@ describe("hardware safety boundaries survive the redesign", () => {
   it("keeps every patient tab mounted while moving the hardware panel to one internal lab owner", () => {
     const studio = source("demo-studio.tsx");
     const persistentLab = source("persistent-arduino-lab.tsx");
+    const diagnostics = source("hardware-lab-diagnostics.tsx");
     expect(studio).not.toContain("<ArduinoStatusPanel");
     expect(studio).not.toContain("<MockDispensingPanel");
     expect(persistentLab.match(/<ArduinoStatusPanel/g)).toHaveLength(1);
     expect(persistentLab).toContain('usePathname() === "/hardware-lab"');
-    expect(persistentLab.match(/<MockDispensingPanel/g)).toHaveLength(1);
+    expect(diagnostics.match(/<MockDispensingPanel/g)).toHaveLength(1);
     expect(studio).toContain("getDemoPanelStates");
     expect(studio).not.toMatch(/activeTab === "dispenser" &&/);
   });
@@ -402,7 +403,7 @@ describe("hardware safety boundaries survive the redesign", () => {
     const lab = source("persistent-arduino-lab.tsx");
     expect(studio).not.toContain("<VisionObservationPanel");
     expect(lab.match(/<VisionObservationPanel/g)).toHaveLength(1);
-    expect(lab).toContain("Developer / Hardware Lab");
+    expect(lab).toContain("Hardware Lab");
     expect(studio).toMatch(/panel\.id === "today"[\s\S]{0,400}<TodayScreen[\s\S]{0,200}: <ConfigurationRequired/);
   });
 

@@ -1,9 +1,13 @@
-import { clerkMiddleware } from "@clerk/nextjs/server";
+import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
 
-// Establish Clerk request auth for App Router server code. The current M0 page
-// shells remain public; future private routes must call auth.protect() here and
-// still authorize every Convex function independently.
-export default clerkMiddleware();
+// Public product shells remain visible, while the internal Hardware Lab also
+// requires Clerk authentication at the route boundary. Convex still performs
+// the authoritative role and synthetic-patient scope checks independently.
+const isHardwareLab = createRouteMatcher(["/hardware-lab(.*)"]);
+
+export default clerkMiddleware(async (auth, request) => {
+  if (isHardwareLab(request)) await auth.protect();
+});
 
 export const config = {
   matcher: [

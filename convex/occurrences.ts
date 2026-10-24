@@ -106,6 +106,12 @@ export const listForPatient = query({
 
         return {
           id: occurrence._id,
+          medicationId: occurrence.medicationId,
+          expiredDemoLeftover:
+            occurrence.mode === "demo"
+            && !occurrence.occurrenceKey.startsWith("dashboard-showcase:")
+            && occurrence.ingestionReport === "UNREPORTED"
+            && occurrence.expiresAt < args.now,
           mode: occurrence.mode,
           medicationName: medication.name,
           instructions: medication.instructions,
@@ -131,7 +137,33 @@ export const listForPatient = query({
             faultCode: runtime.faultCode ?? null,
           }
         : null,
-      occurrences: rows.filter((row) => row !== null).sort((a, b) => a.scheduledFor - b.scheduledFor),
+      occurrences: withoutObsoleteAndDuplicates(rows.filter((row) => row !== null)).sort((a, b) => a.scheduledFor - b.scheduledFor),
     };
   },
 });
+
+type ListedOccurrence = {
+  medicationId: string;
+  expiredDemoLeftover: boolean;
+  scheduledFor: number;
+  eligibility: string;
+  ingestionReport: string;
+  attemptStatus: string;
+};
+
+/**
+ * Hides doses left over from an old schedule revision (unless they carry a patient report), expired one-off demo
+ * doses (such as the 60-second voice demo) that nobody reported on, and keeps one
+ * row when the same medication has two occurrences at the same time, preferring the one with a report or attempt.
+ */
+function withoutObsoleteAndDuplicates<T extends ListedOccurrence>(rows: T[]) {
+  const current = rows.filter((row) => !row.expiredDemoLeftover && (row.eligibility !== "STALE" || row.ingestionReport !== "UNREPORTED"));
+  const rank = (row: T) => (row.ingestionReport !== "UNREPORTED" ? 2 : 0) + (row.attemptStatus !== "NONE" ? 1 : 0);
+  const kept = new Map<string, T>();
+  for (const row of current) {
+    const key = `${row.medicationId}:${Math.round(row.scheduledFor / 60_000)}`;
+    const existing = kept.get(key);
+    if (!existing || rank(row) > rank(existing)) kept.set(key, row);
+  }
+  return [...kept.values()];
+}

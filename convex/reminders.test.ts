@@ -144,6 +144,20 @@ describe("M3 deterministic reminders", () => {
 });
 
 describe("M3 care case safety", () => {
+  it("denies synthetic scenario controls to a patient account", async () => {
+    const root = convexTest(schema, modules);
+    const patient = root.withIdentity({ tokenIdentifier: "issuer|scenario-patient", name: "Patient" });
+    await root.run(async (ctx) => {
+      await ctx.db.insert("appUsers", {
+        tokenIdentifier: "issuer|scenario-patient", displayName: "Patient", role: "patient",
+        isSynthetic: true, createdAt: Date.now(),
+      });
+    });
+    await expect(patient.mutation(api.reminders.runDemoScenario, {
+      scenario: "DUE_REMINDER",
+    })).rejects.toThrow("Hardware Lab caregiver access required");
+  });
+
   it("isolates cases between caregivers and rejects cross-patient updates", async () => {
     const owner = await setup("issuer|m3-owner");
     await owner.actor.mutation(api.reminders.runDemoScenario, {

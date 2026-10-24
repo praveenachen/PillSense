@@ -19,6 +19,16 @@ type DispatchEvidence =
   | "FIRMWARE_REJECTED"
   | "MOTOR_STEPS_COMPLETED";
 
+export type ArduinoLabSnapshot = {
+  connected: boolean;
+  ready: boolean;
+  phase: MotorPhase | null;
+  operationId: string | null;
+  lastResponse: string | null;
+  dispatchEvidence: DispatchEvidence;
+  error: string | null;
+};
+
 const dispatchEvidenceLabels: Record<DispatchEvidence, string> = {
   COMMAND_NOT_SENT: "Command not sent",
   WRITE_PENDING: "BLE write in progress",
@@ -53,9 +63,16 @@ function phaseLabel(phase: MotorPhase | null, connected: boolean) {
   return connected ? "Connected" : "Disconnected";
 }
 
-export function ArduinoStatusPanel({ onOpenSetup }: { onOpenSetup?: () => void } = {}) {
+export function ArduinoStatusPanel({ onOpenSetup, onDiagnostic, onSnapshot }: {
+  onOpenSetup?: () => void;
+  onDiagnostic?: (entry: H3DiagnosticEntry) => void;
+  onSnapshot?: (snapshot: ArduinoLabSnapshot) => void;
+} = {}) {
   const [transport] = useState(() => new WebBluetoothDispenserStatusTransport({
-    diagnostic: logTransportDiagnostic,
+    diagnostic: (entry) => {
+      logTransportDiagnostic(entry);
+      onDiagnostic?.(entry);
+    },
   }));
   const [connected, setConnected] = useState(false);
   const [busyAction, setBusyAction] = useState<BusyAction>(null);
@@ -93,6 +110,18 @@ export function ArduinoStatusPanel({ onOpenSetup }: { onOpenSetup?: () => void }
       }
     });
   }, [transport]);
+
+  useEffect(() => {
+    onSnapshot?.({
+      connected,
+      ready: deviceReady,
+      phase: motorPhase,
+      operationId,
+      lastResponse,
+      dispatchEvidence,
+      error,
+    });
+  }, [connected, deviceReady, dispatchEvidence, error, lastResponse, motorPhase, onSnapshot, operationId]);
 
   function applyMotorResult(result: ArduinoMotorResult) {
     setLastResponse(result.response);
@@ -257,12 +286,12 @@ export function ArduinoStatusPanel({ onOpenSetup }: { onOpenSetup?: () => void }
   const statusDetail = motorPhase === "STEPS_COMPLETED"
     ? "Step sequence completed. Inspect the carousel yourself to confirm it is back at Slot 0."
     : motorPhase === "UNCERTAIN"
-      ? "Outcome uncertain. Do not resend; reconnect and use Last result."
+      ? "Outcome uncertain. Do not resend; reconnect and use Get Last Result."
       : !connected
         ? "Pair the Arduino over Bluetooth to begin."
         : deviceReady
           ? "Firmware reports READY. Home alignment is confirmed by you, not by a sensor."
-          : "Use Device status to read the firmware state.";
+          : "Use Get Status to read the firmware state.";
   const runBlockers = [
     !connected && "connect the Arduino",
     connected && !deviceReady && "read device status until it reports READY",
@@ -302,6 +331,12 @@ export function ArduinoStatusPanel({ onOpenSetup }: { onOpenSetup?: () => void }
         </span>
       </div>
 
+      <div className="grid grid-cols-3 gap-2" aria-label="Physical LED meanings">
+        <LedMeaning color="bg-red-500 shadow-[0_0_9px_#ef4444]" title="Red" detail="Idle" />
+        <LedMeaning color="bg-yellow-300 shadow-[0_0_9px_#fde047]" title="Yellow" detail="Active" />
+        <LedMeaning color="bg-emerald-400 shadow-[0_0_9px_#34d399]" title="Green" detail="Sequence complete" />
+      </div>
+
       <fieldset className="rounded-2xl border border-[#f3d4d4] bg-[#fffafa] px-3.5 pb-1.5 pt-1">
         <legend className="px-1 text-[0.7rem] font-bold uppercase tracking-wide text-[#a32020]">Empty carousel only · no medications</legend>
         <div className="text-[0.78rem] leading-[1.15rem] text-[#1e293b]">
@@ -330,7 +365,7 @@ export function ArduinoStatusPanel({ onOpenSetup }: { onOpenSetup?: () => void }
         )}
         {motorDispatched && (
           <p className="mt-2 px-2 text-xs font-semibold leading-5 text-[#a32020]">
-            MOVE is locked for this page session. Reconnecting and Last result are read-only and will not resend it.
+            MOVE is locked for this page session. Reconnecting and Get Last Result are read-only and will not resend it.
           </p>
         )}
       </div>
@@ -342,11 +377,11 @@ export function ArduinoStatusPanel({ onOpenSetup }: { onOpenSetup?: () => void }
         </button>
         <button type="button" onClick={getStatus} disabled={busy || !connected} className="ps-focus flex min-h-[3.8rem] flex-col items-center justify-center gap-1 px-1 text-center text-[0.7rem] font-medium text-[#475569] disabled:opacity-50">
           <span className="text-[#0f766e]"><Icon name="info" size={21} /></span>
-          {busyAction === "status" ? "Reading…" : "Device status"}
+          {busyAction === "status" ? "Reading…" : "Get Status"}
         </button>
         <button type="button" onClick={getLastResult} disabled={busy || !connected || !operationId} className="ps-focus flex min-h-[3.8rem] flex-col items-center justify-center gap-1 px-1 text-center text-[0.7rem] font-medium text-[#475569] disabled:opacity-50">
           <span className="text-[#0f766e]"><Icon name="refresh" size={21} /></span>
-          {busyAction === "result" ? "Reconciling…" : "Last result"}
+          {busyAction === "result" ? "Reconciling…" : "Get Last Result"}
         </button>
       </div>
       {!operationId && <p className="-mt-2 px-2 text-xs text-[#64748b]">Last result becomes available after a Slot 6 test has been sent.</p>}
@@ -398,4 +433,8 @@ export function ArduinoStatusPanel({ onOpenSetup }: { onOpenSetup?: () => void }
       {error && <p role="alert" className="rounded-2xl bg-[#fde4e4] p-3 text-sm text-[#8f1d1d]">{error}</p>}
     </section>
   );
+}
+
+function LedMeaning({ color, title, detail }: { color: string; title: string; detail: string }) {
+  return <div className="ps-card px-2 py-2 text-center"><span className={`mx-auto block size-2.5 rounded-full ${color}`} /><span className="mt-1 block text-[0.68rem] font-bold text-[#334155]">{title}</span><span className="block text-[0.6rem] text-[#64748b]">{detail}</span></div>;
 }

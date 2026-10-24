@@ -25,9 +25,10 @@ Start the bridge from the repository root:
 .\vision\.venv\Scripts\python.exe -m vision.service
 ```
 
-In a second terminal, run `npm run dev`, sign in, and open
-`http://localhost:3000/demo`. Under **Today**, select **Start camera**. Stop the
-camera from the same panel when finished. The service owns at most one camera
+In a second terminal, run `npm run dev`, sign in with the authorized synthetic
+demo caregiver, and open `http://localhost:3000/hardware-lab`. Choose **Camera**,
+select the OpenCV camera index, and select **Start observation**. Stop and
+release the camera from the same panel when finished. The service owns at most one camera
 session and automatically releases it after five minutes, on Stop, on an error,
 or when the process exits.
 
@@ -38,6 +39,11 @@ origin allowlist. `PILLSENSE_VISION_CAMERA` selects another camera and
 local web origin, update `PILLSENSE_VISION_ALLOWED_ORIGINS`; the browser URL is
 configured with `NEXT_PUBLIC_VISION_BRIDGE_URL`. Do not expose the service via a
 public tunnel.
+
+The Hardware Lab preview is a sequence of short-lived JPEG snapshots generated
+from the same capture and detector loop. It is protected by the existing
+short-lived session capability, remains on localhost, and is held only in
+memory. It does not open a second browser camera stream.
 
 Only small event records are sent to Convex: camera lifecycle, whether exactly
 one person is visible, and a debounced hand-to-mouth observation. Raw frames,

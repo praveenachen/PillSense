@@ -33,11 +33,13 @@ class SessionStatus(str, Enum):
 @dataclass
 class SessionRecord:
     session_id: str
+    camera_index: int
     status: SessionStatus
     started_at: int
     events: list[ObservationEvent]
     stop_requested: threading.Event
     thread: threading.Thread | None = None
+    latest_preview: bytes | None = None
 
 
 class CameraBusyError(RuntimeError):
@@ -63,6 +65,18 @@ def _default_detector() -> Detector:
     return HandMouthDetector()
 
 
+def _default_preview_encoder(frame: object) -> bytes | None:
+    """Encode one annotated frame in memory; frames are never written to disk."""
+    import cv2
+
+    ok, encoded = cv2.imencode(
+        ".jpg",
+        frame,
+        [int(cv2.IMWRITE_JPEG_QUALITY), 78],
+    )
+    return encoded.tobytes() if ok else None
+
+
 class CameraSessionManager:
     """Owns at most one capture and stores only small observation messages."""
 
@@ -73,12 +87,14 @@ class CameraSessionManager:
         frame_interval_seconds: float = 0.03,
         capture_factory: Callable[[int], Capture] = _default_capture,
         detector_factory: Callable[[], Detector] = _default_detector,
+        preview_encoder: Callable[[object], bytes | None] = _default_preview_encoder,
     ):
         self.camera_index = camera_index
         self.timeout_seconds = timeout_seconds
         self.frame_interval_seconds = frame_interval_seconds
         self.capture_factory = capture_factory
         self.detector_factory = detector_factory
+        self.preview_encoder = preview_encoder
         self._lock = threading.RLock()
         self._active: SessionRecord | None = None
         self._starting_session_id: str | None = None
@@ -91,11 +107,12 @@ class CameraSessionManager:
                 "service": "ready",
                 "cameraOwnerActive": (active is not None and active.status == SessionStatus.ACTIVE) or self._starting_session_id is not None,
                 "activeSessionId": active.session_id if active else self._starting_session_id,
-                "cameraIndex": self.camera_index,
+                "cameraIndex": active.camera_index if active else self.camera_index,
                 "rawFramesStored": False,
             }
 
-    def start(self, session_id: str) -> dict[str, object]:
+    def start(self, session_id: str, camera_index: int | None = None) -> dict[str, object]:
+        selected_camera_index = self.camera_index if camera_index is None else camera_index
         with self._lock:
             if self._active is not None and self._active.status == SessionStatus.ACTIVE:
                 if self._active.session_id == session_id:
@@ -110,13 +127,14 @@ class CameraSessionManager:
 
         record = SessionRecord(
             session_id=session_id,
+            camera_index=selected_camera_index,
             status=SessionStatus.ACTIVE,
             started_at=int(time.time() * 1000),
             events=[],
             stop_requested=threading.Event(),
         )
         try:
-            capture = self.capture_factory(self.camera_index)
+            capture = self.capture_factory(selected_camera_index)
         except Exception as exc:
             record.status = SessionStatus.ERROR
             self._emit(record, ObservationType.CAMERA_ERROR, f"Camera initialization failed: {type(exc).__name__}")
@@ -192,6 +210,14 @@ class CameraSessionManager:
                 raise SessionNotFoundError("Unknown camera observation session")
             return self._snapshot_record(record)
 
+    def preview(self, session_id: str) -> bytes | None:
+        """Return only the latest in-memory annotated frame for this session."""
+        with self._lock:
+            record = self._sessions.get(session_id)
+            if record is None:
+                raise SessionNotFoundError("Unknown camera observation session")
+            return record.latest_preview
+
     def shutdown(self) -> None:
         with self._lock:
             active = self._active
@@ -224,7 +250,13 @@ class CameraSessionManager:
                     stop_detail = "Camera stopped returning frames"
                     self._emit(record, ObservationType.CAMERA_ERROR, stop_detail)
                     break
-                result = detector.process(frame, annotate=False)
+                result = detector.process(frame, annotate=True)
+                annotated_frame = getattr(result, "frame", None)
+                if annotated_frame is not None:
+                    preview = self.preview_encoder(annotated_frame)
+                    if preview is not None:
+                        with self._lock:
+                            record.latest_preview = preview
                 if result.person_visible != person_visible:
                     person_visible = result.person_visible
                     self._emit(
@@ -265,7 +297,9 @@ class CameraSessionManager:
     def _snapshot_record(record: SessionRecord) -> dict[str, object]:
         return {
             "sessionId": record.session_id,
+            "cameraIndex": record.camera_index,
             "status": record.status.value,
             "startedAt": record.started_at,
+            "previewAvailable": record.latest_preview is not None,
             "events": [event.to_dict() for event in record.events],
         }

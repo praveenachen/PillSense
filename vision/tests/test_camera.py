@@ -31,6 +31,7 @@ class FakeCapture:
 class Result:
     person_visible: bool
     detected: bool
+    frame: object | None = None
 
 
 class FakeDetector:
@@ -39,7 +40,7 @@ class FakeDetector:
         self.closed = False
 
     def process(self, _frame, annotate=False):
-        assert annotate is False
+        assert annotate is True
         return self.results.pop(0) if self.results else Result(True, False)
 
     def close(self):
@@ -61,6 +62,7 @@ def test_start_stop_lifecycle_releases_single_camera_owner():
         frame_interval_seconds=0.005,
         capture_factory=lambda _index: capture,
         detector_factory=lambda: detector,
+        preview_encoder=lambda _frame: b"jpeg-preview",
     )
     started = manager.start("session-one")
     assert started["status"] == "ACTIVE"
@@ -72,6 +74,24 @@ def test_start_stop_lifecycle_releases_single_camera_owner():
     assert detector.closed is True
     assert [event["type"] for event in stopped["events"]][0] == "CAMERA_STARTED"
     assert [event["type"] for event in stopped["events"]][-1] == "CAMERA_STOPPED"
+
+
+def test_preview_uses_same_capture_and_requested_camera_without_storing_history():
+    selected_indexes = []
+    capture = FakeCapture(frames=[object()] * 100)
+    detector = FakeDetector([Result(True, False, frame=object())] * 100)
+    manager = CameraSessionManager(
+        frame_interval_seconds=0.005,
+        capture_factory=lambda index: selected_indexes.append(index) or capture,
+        detector_factory=lambda: detector,
+        preview_encoder=lambda _frame: b"latest-jpeg",
+    )
+    manager.start("session-preview", camera_index=2)
+    wait_for(lambda: manager.preview("session-preview") is not None)
+    assert selected_indexes == [2]
+    assert manager.preview("session-preview") == b"latest-jpeg"
+    assert manager.snapshot("session-preview")["previewAvailable"] is True
+    manager.stop("session-preview")
 
 
 def test_camera_unavailable_returns_error_events_without_worker():

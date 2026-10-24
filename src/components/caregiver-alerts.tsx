@@ -5,13 +5,15 @@ import { useState } from "react";
 import type { Id } from "../../convex/_generated/dataModel";
 import { api } from "../../convex/_generated/api";
 
-const reasonLabels = {
+export const reasonLabels = {
   NO_PATIENT_RESPONSE: "No patient response",
   MOTOR_COMPLETED_INGESTION_UNCONFIRMED: "Motor completed; ingestion unconfirmed",
   MOTOR_OUTCOME_UNKNOWN: "Motor outcome unknown",
   PATIENT_REPORTED_NOT_TAKEN: "Patient reported NOT TAKEN",
   DEVICE_FAULT_OR_DISCONNECTED: "Device fault or disconnection",
 } as const;
+
+export type CareCaseItem = CaseCardProps["item"];
 
 type CaseCardProps = {
   item: {
@@ -93,7 +95,8 @@ function AuthenticatedAlerts() {
   );
 }
 
-function CaseCard({ item }: CaseCardProps) {
+/** Shared case actions so the full caregiver route and the mobile detail view use one implementation. */
+export function useCaseActions(item: CareCaseItem) {
   const updateStatus = useMutation(api.careCases.updateStatus);
   const requestInvestigation = useMutation(api.agentRuns.requestInvestigation);
   const [note, setNote] = useState(item.resolutionNote ?? "");
@@ -129,6 +132,12 @@ function CaseCard({ item }: CaseCardProps) {
       setBusy(false);
     }
   }
+
+  return { note, setNote, outcome, setOutcome, busy, error, submit, investigate };
+}
+
+function CaseCard({ item }: CaseCardProps) {
+  const { note, setNote, outcome, setOutcome, busy, error, submit, investigate } = useCaseActions(item);
 
   return (
     <article className={`rounded-2xl border bg-white p-5 ${item.status === "OPEN" ? "border-amber-300" : "border-slate-200"}`}>

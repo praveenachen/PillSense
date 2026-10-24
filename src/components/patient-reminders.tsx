@@ -56,40 +56,40 @@ function AuthenticatedReminders() {
   }
 
   if (reminders === undefined) {
-    return <section className="rounded-2xl border border-slate-200 bg-white p-6">Loading reminders…</section>;
+    return <section className="ps-card p-5 text-sm text-[#475569]">Loading reminders…</section>;
   }
 
   return (
-    <section className="rounded-2xl border border-teal-200 bg-teal-50/50 p-6 shadow-sm">
+    <section aria-labelledby="reminders-title" className="ps-card ps-legacy-scope p-4">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <p className="text-sm font-bold uppercase tracking-wide text-teal-700">In-app reminders</p>
-          <h2 className="mt-1 text-2xl font-semibold">Medication routine</h2>
-          <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">
+          <p className="text-[0.7rem] font-bold uppercase tracking-[0.14em] text-[#0f766e]">In-app reminders</p>
+          <h2 id="reminders-title" className="ps-display mt-1 text-xl font-semibold text-[#0f172a]">Medication routine</h2>
+          <p className="mt-2 text-sm leading-6 text-[#475569]">
             Reminders are independent of the motor. A completed motor operation never confirms ingestion.
           </p>
         </div>
-        <span className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-slate-600">
+        <span className="rounded-full bg-[#e3efff] px-3 py-1 text-xs font-semibold text-[#1e4f8a]">
           Follow-up window: {reminders.windows.followUpWindowMinutes} min
         </span>
       </div>
 
       {reminders.reminders.length === 0 ? (
-        <p className="mt-5 rounded-xl bg-white p-4 text-sm text-slate-600">
+        <p className="mt-4 rounded-2xl bg-[#f1f7fd] p-4 text-sm text-[#475569]">
           No upcoming or due reminders are currently in the reminder window.
         </p>
       ) : (
-        <div className="mt-5 grid gap-3 md:grid-cols-2">
+        <div className="mt-4 grid gap-3">
           {reminders.reminders.map((reminder) => (
-            <article key={reminder.occurrenceId} className="rounded-2xl border border-teal-100 bg-white p-5">
+            <article key={reminder.occurrenceId} className="rounded-2xl border border-[#dbe7f3] bg-[#f8fbff] p-4">
               <div className="flex items-start justify-between gap-3">
                 <div>
-                  <p className="text-xs font-bold uppercase tracking-wide text-teal-700">
+                  <p className="text-xs font-bold uppercase tracking-wide text-[#0f766e]">
                     {reminder.mode === "demo" ? "DEMO · " : ""}{reminder.state}
                   </p>
                   <h3 className="mt-1 text-lg font-semibold">{reminder.medicationName}</h3>
                 </div>
-                <span className="rounded-full bg-slate-900 px-3 py-1 text-xs font-bold text-white">
+                <span className="rounded-full bg-[#0f172a] px-3 py-1 text-xs font-bold text-white">
                   Slot {reminder.slot}
                 </span>
               </div>
@@ -108,9 +108,8 @@ function AuthenticatedReminders() {
       )}
 
       {reminders.isSynthetic && (
-        <div className="mt-6 rounded-2xl border-2 border-dashed border-violet-300 bg-violet-50 p-5">
-          <p className="inline-flex rounded-full bg-violet-700 px-3 py-1 text-xs font-bold text-white">DEMO MODE · AUDITED TIME SIMULATION</p>
-          <p className="mt-3 text-sm leading-6 text-slate-600">
+        <details className="mt-5 rounded-2xl border border-dashed border-[#c4b5fd] bg-[#f5f3ff] p-4"><summary className="flex min-h-11 cursor-pointer items-center text-sm font-bold text-[#4c1d95]">DEMO MODE · AUDITED TIME SIMULATION</summary><div className="mt-2">
+          <p className="text-sm leading-6 text-slate-600">
             These controls create labeled synthetic occurrences and case transitions. They do not authorize dispensing or reload the one-pill compartment.
           </p>
           <div className="mt-4 flex flex-wrap gap-2">
@@ -123,7 +122,7 @@ function AuthenticatedReminders() {
                   () => runScenario({ scenario: scenario as keyof typeof scenarioLabels }),
                   `${label} scenario created.`,
                 )}
-                className="rounded-full border border-violet-300 bg-white px-4 py-2 text-sm font-semibold text-violet-800 disabled:opacity-50"
+                className="min-h-11 rounded-full border border-violet-300 bg-white px-4 py-2 text-sm font-semibold text-violet-800 disabled:opacity-50"
               >
                 Simulate {label}
               </button>
@@ -157,15 +156,15 @@ function AuthenticatedReminders() {
             type="button"
             disabled={busy}
             onClick={() => perform(() => resetScenarios({}), "Synthetic scenarios closed; audit records retained.")}
-            className="mt-4 text-sm font-semibold text-violet-800 underline disabled:opacity-50"
+            className="mt-4 min-h-11 text-sm font-semibold text-violet-800 underline disabled:opacity-50"
           >
             Reset synthetic reminder scenarios
           </button>
-        </div>
+        </div></details>
       )}
 
-      {message && <p aria-live="polite" className="mt-4 rounded-xl bg-emerald-100 p-3 text-sm text-emerald-900">{message}</p>}
-      {error && <p role="alert" className="mt-4 rounded-xl bg-rose-100 p-3 text-sm text-rose-900">{error}</p>}
+      {message && <p aria-live="polite" className="mt-4 rounded-2xl bg-[#d9f5ef] p-3 text-sm text-[#0b4f45]">{message}</p>}
+      {error && <p role="alert" className="mt-4 rounded-2xl bg-[#fde4e4] p-3 text-sm text-[#8f1d1d]">{error}</p>}
     </section>
   );
 }

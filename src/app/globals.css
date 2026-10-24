@@ -8,12 +8,35 @@
   --pillsense-primary: #087f78;
   --pillsense-mint: #ddf3eb;
   --pillsense-alert: #d97706;
+
+  /* H5A mobile design tokens (resolved from docs/design/pillsense-ui-reference-v2.png) */
+  --ps-mist: #ebf4ff;
+  --ps-pearl: #f8fbff;
+  --ps-surface: #ffffff;
+  --ps-seafoam: #14b8a6;
+  --ps-teal: #0f766e;
+  --ps-teal-deep: #0b5d63;
+  --ps-navy: #0f172a;
+  --ps-slate: #475569;
+  --ps-muted: #64748b;
+  --ps-line: #dbe7f3;
+  --ps-amber: #f59e0b;
+  --ps-coral: #ef4444;
+  --ps-coral-soft: #fdecec;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --font-sans: var(--font-geist-sans);
+  --font-display: var(--font-fraunces);
+  --color-ps-mist: var(--ps-mist);
+  --color-ps-seafoam: var(--ps-seafoam);
+  --color-ps-teal: var(--ps-teal);
+  --color-ps-navy: var(--ps-navy);
+  --color-ps-muted: var(--ps-muted);
+  --color-ps-line: var(--ps-line);
+  --color-ps-coral: var(--ps-coral);
   --font-mono: var(--font-geist-mono);
 }
 
@@ -69,4 +92,84 @@ body {
   .demo-mobile-scroll {
     scroll-behavior: auto;
   }
+}
+
+/* ---------- H5A premium mobile UI ---------- */
+/* Reference-driven system (docs/design/pillsense-ui-reference-v2.png): bright, airy,
+   white-to-mist canvas, sans headings, restrained seafoam, deep-teal CTAs. */
+.ps-display {
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
+  letter-spacing: -0.015em;
+}
+
+/* Serif is reserved for the Today greeting. */
+.ps-greeting {
+  font-family: var(--font-fraunces), Georgia, serif;
+  font-optical-sizing: auto;
+  letter-spacing: -0.015em;
+}
+
+.ps-canvas {
+  background: linear-gradient(180deg, #e8f2fd 0%, #f2f8fe 34%, #fbfdff 70%, #ffffff 100%);
+}
+
+.ps-card {
+  background: var(--ps-surface);
+  border: 1px solid #e6eef7;
+  border-radius: 1.1rem;
+  box-shadow: 0 1px 2px rgb(15 23 42 / 0.04), 0 6px 18px -10px rgb(15 76 117 / 0.16);
+}
+
+.ps-cta {
+  background: linear-gradient(135deg, #0f766e 0%, #0b5d63 100%);
+  color: #fff;
+  box-shadow: 0 8px 18px -10px rgb(15 118 110 / 0.65), inset 0 1px 0 rgb(255 255 255 / 0.16);
+  transition: transform 0.15s ease, box-shadow 0.15s ease, filter 0.15s ease;
+}
+.ps-cta:hover:not(:disabled) { filter: brightness(1.06); }
+.ps-cta:active:not(:disabled) { transform: translateY(1px) scale(0.99); }
+.ps-cta-danger {
+  background: linear-gradient(135deg, #ef4444 0%, #d62c2c 100%);
+  color: #fff;
+  box-shadow: 0 8px 18px -10px rgb(239 68 68 / 0.6), inset 0 1px 0 rgb(255 255 255 / 0.18);
+}
+.ps-cta:disabled {
+  background: #d3e3e1;
+  color: #3f5f5c;
+  box-shadow: none;
+  cursor: not-allowed;
+}
+
+.ps-focus:focus-visible,
+.ps-card button:focus-visible,
+.ps-cta:focus-visible {
+  outline: 3px solid rgb(20 184 166 / 0.55);
+  outline-offset: 2px;
+}
+
+.ps-orb {
+  background: radial-gradient(circle at 35% 25%, #1fa89a 0%, #0f766e 50%, #0a4a55 100%);
+  box-shadow: 0 10px 22px -10px rgb(11 93 99 / 0.7), inset 0 1px 0 rgb(255 255 255 / 0.22);
+}
+
+@keyframes ps-ring {
+  0% { transform: scale(0.82); opacity: 0.55; }
+  100% { transform: scale(1.18); opacity: 0; }
+}
+@keyframes ps-bar {
+  0%, 100% { transform: scaleY(0.25); }
+  50% { transform: scaleY(1); }
+}
+.ps-ring-live { animation: ps-ring 2.4s ease-out infinite; }
+.ps-bar-live { animation: ps-bar 0.9s ease-in-out infinite; transform-origin: center; }
+
+@media (prefers-reduced-motion: reduce) {
+  .ps-ring-live, .ps-bar-live { animation: none; }
+  .ps-cta { transition: none; }
+}
+
+/* Restyle legacy slate/amber primitives that still appear inside reused panels. */
+.ps-legacy-scope .input {
+  border-radius: 0.9rem;
+  min-height: 2.75rem;
 }

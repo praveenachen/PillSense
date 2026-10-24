@@ -10,11 +10,11 @@ export default function PatientPage() {
   return (
     <AppShell eyebrow="Patient view" title="Your demo medication schedule, at a glance." description="Review fixed local schedule information assigned by an authorized caregiver. PillSense does not infer prescriptions or provide medical advice.">
       <PatientDashboard />
-      <VoiceCompanion />
+      <div className="mt-6"><VoiceCompanion /></div>
       <PatientSupplyReminder />
       <PatientReminders />
-      <ArduinoStatusPanel />
-      <MockDispensingPanel />
+      <div className="mt-6 mx-auto w-full max-w-[32rem]"><ArduinoStatusPanel /></div>
+      <div className="mt-6"><MockDispensingPanel /></div>
     </AppShell>
   );
 }

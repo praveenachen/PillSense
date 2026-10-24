@@ -121,17 +121,17 @@ function AuthenticatedMockPanel() {
   }
 
   if (doses === undefined) {
-    return <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-6">Loading mock device and dose occurrences…</section>;
+    return <section className="ps-card p-5 text-sm text-[#475569]">Loading mock device and dose occurrences…</section>;
   }
 
   const deviceState = doses.device?.state ?? "DISCONNECTED";
 
   return (
-    <section id="mock-dispensing" className="mt-6 scroll-mt-6 rounded-2xl border-2 border-dashed border-violet-300 bg-violet-50/60 p-6">
+    <section id="mock-dispensing" className="scroll-mt-4 rounded-[1.25rem] border border-dashed border-[#c4b5fd] bg-[#f5f3ff] p-4">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <p className="inline-flex rounded-full bg-violet-700 px-3 py-1 text-xs font-bold tracking-wide text-white">MOCK DEVICE · SIMULATED DISPENSING</p>
-          <h2 className="mt-3 text-2xl font-semibold">Demo dispenser</h2>
+          <h2 className="ps-display mt-3 text-xl font-semibold text-[#0f172a]">Demo dispenser</h2>
           <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">Motor events are simulated in this browser. Completion does not prove pill release, collection, or ingestion.</p>
         </div>
         <div className="rounded-xl border border-violet-200 bg-white px-4 py-3 text-sm">
@@ -140,8 +140,8 @@ function AuthenticatedMockPanel() {
       </div>
 
       <div className="mt-5 flex flex-wrap gap-3">
-        <button type="button" onClick={reconnect} disabled={busy} className="rounded-full border border-violet-300 bg-white px-4 py-2 text-sm font-semibold text-violet-800 disabled:opacity-50">Connect / reset mock</button>
-        <button type="button" onClick={calibrate} disabled={busy || deviceState === "DISCONNECTED"} className="rounded-full bg-violet-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">Calibrate Home</button>
+        <button type="button" onClick={reconnect} disabled={busy} className="rounded-full border border-violet-300 bg-white min-h-11 px-4 py-2 text-sm font-semibold text-violet-800 disabled:opacity-50">Connect / reset mock</button>
+        <button type="button" onClick={calibrate} disabled={busy || deviceState === "DISCONNECTED"} className="rounded-full bg-violet-700 min-h-11 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">Calibrate Home</button>
         <button
           type="button"
           disabled={busy}
@@ -158,7 +158,7 @@ function AuthenticatedMockPanel() {
               setBusy(false);
             }
           }}
-          className="rounded-full border border-teal-300 bg-teal-50 px-4 py-2 text-sm font-semibold text-teal-800 disabled:opacity-50"
+          className="rounded-full border border-teal-300 bg-teal-50 min-h-11 px-4 py-2 text-sm font-semibold text-teal-800 disabled:opacity-50"
         >
           Create due dose · DEMO MODE
         </button>
@@ -180,7 +180,7 @@ function AuthenticatedMockPanel() {
         {doses.occurrences.length === 0 ? (
           <p className="rounded-xl bg-white p-4 text-sm text-slate-600">No generated occurrences yet. Use DEMO MODE to safely create a due synthetic occurrence.</p>
         ) : doses.occurrences.map((dose) => (
-          <article key={dose.id} className="rounded-2xl border border-violet-200 bg-white p-5">
+          <article key={dose.id} className="rounded-2xl border border-[#ddd6fe] bg-white p-4">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
                 <p className="text-xs font-bold uppercase tracking-wide text-violet-700">{dose.mode === "demo" ? "DEMO DUE OCCURRENCE" : "Scheduled occurrence"}</p>
@@ -192,8 +192,8 @@ function AuthenticatedMockPanel() {
             <p className="mt-3 text-sm text-slate-600">{eligibilityMessage[dose.eligibility] ?? dose.eligibility}</p>
             <div className="mt-4 flex flex-wrap gap-2">
               <button type="button" disabled={busy || dose.eligibility !== "ELIGIBLE"} onClick={() => dispense(dose.id)} className="min-h-11 rounded-full bg-teal-600 px-5 py-2 text-sm font-bold text-white disabled:cursor-not-allowed disabled:bg-slate-300">Dispense mock pill</button>
-              <button type="button" disabled={busy} onClick={() => reportIngestion({ occurrenceId: dose.id, report: "TAKEN" })} className="min-h-11 rounded-full border border-emerald-300 bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-800">Taken</button>
-              <button type="button" disabled={busy} onClick={() => reportIngestion({ occurrenceId: dose.id, report: "NOT_TAKEN" })} className="min-h-11 rounded-full border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700">Not Taken</button>
+              <button type="button" disabled={busy} onClick={() => reportIngestion({ occurrenceId: dose.id, report: "TAKEN" })} className="min-h-11 rounded-full border border-emerald-300 bg-emerald-50 min-h-11 px-4 py-2 text-sm font-semibold text-emerald-800">Taken</button>
+              <button type="button" disabled={busy} onClick={() => reportIngestion({ occurrenceId: dose.id, report: "NOT_TAKEN" })} className="min-h-11 rounded-full border border-slate-300 bg-white min-h-11 px-4 py-2 text-sm font-semibold text-slate-700">Not Taken</button>
             </div>
             <p className="mt-3 text-xs text-slate-500">Patient report: {dose.ingestionReport.replaceAll("_", " ")} · Physical release: unverified</p>
           </article>

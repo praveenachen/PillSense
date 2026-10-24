@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { CarouselGraphic, Icon, SectionTitle, StatusPill } from "./mobile-ui";
 import { createArduinoOperationId, type ArduinoMotorResult } from "@/lib/dispenser/ble-protocol";
 import {
   ArduinoMotorOutcomeUncertainError,
@@ -52,7 +53,7 @@ function phaseLabel(phase: MotorPhase | null, connected: boolean) {
   return connected ? "Connected" : "Disconnected";
 }
 
-export function ArduinoStatusPanel() {
+export function ArduinoStatusPanel({ onOpenSetup }: { onOpenSetup?: () => void } = {}) {
   const [transport] = useState(() => new WebBluetoothDispenserStatusTransport({
     diagnostic: logTransportDiagnostic,
   }));
@@ -243,82 +244,140 @@ export function ArduinoStatusPanel() {
   const confirmationsComplete = carouselEmpty && alignedBeforeStartup && movingPartsClear;
   const runDisabled = busy || !connected || !deviceReady || !confirmationsComplete || motorDispatched;
 
+  const attention = motorPhase === "UNCERTAIN" || Boolean(error);
+  // The check icon appears only when the firmware reports READY or the step sequence completed.
+  const statusPositive = connected && (deviceReady || motorPhase === "STEPS_COMPLETED");
+  const statusTitle = motorPhase
+    ? phaseLabel(motorPhase, connected)
+    : !connected
+      ? "Not connected"
+      : deviceReady
+        ? "Ready"
+        : "Connected";
+  const statusDetail = motorPhase === "STEPS_COMPLETED"
+    ? "Step sequence completed. Inspect the carousel yourself to confirm it is back at Slot 0."
+    : motorPhase === "UNCERTAIN"
+      ? "Outcome uncertain. Do not resend; reconnect and use Last result."
+      : !connected
+        ? "Pair the Arduino over Bluetooth to begin."
+        : deviceReady
+          ? "Firmware reports READY. Home alignment is confirmed by you, not by a sensor."
+          : "Use Device status to read the firmware state.";
+  const runBlockers = [
+    !connected && "connect the Arduino",
+    connected && !deviceReady && "read device status until it reports READY",
+    !confirmationsComplete && "tick all three safety confirmations",
+    motorDispatched && "movement is locked for this page session",
+  ].filter(Boolean) as string[];
+  const activity: Array<{ title: string; detail: string; tone: "ok" | "warn" | "info" }> = [];
+  if (operationId) {
+    activity.push({
+      title: `Slot 6 test · ${phaseLabel(motorPhase, connected)}`,
+      detail: `${dispatchEvidenceLabels[dispatchEvidence]} · ${operationId}`,
+      tone: motorPhase === "STEPS_COMPLETED" ? "ok" : motorPhase === "UNCERTAIN" ? "warn" : "info",
+    });
+  }
+  if (lastResponse) activity.push({ title: "Arduino response", detail: lastResponse, tone: "info" });
+  if (connected) activity.push({ title: "Bluetooth connected", detail: "Direct Web Bluetooth session in this browser tab", tone: "ok" });
+
   return (
-    <section className="mt-6 rounded-2xl border-2 border-amber-300 bg-amber-50/70 p-6">
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <p className="inline-flex rounded-full bg-amber-700 px-3 py-1 text-xs font-bold tracking-wide text-white">
-            REAL ARDUINO · SUPERVISED HARDWARE TEST
-          </p>
-          <h2 className="mt-3 text-2xl font-semibold">Arduino Uno R4 WiFi · Slot 6 only</h2>
-          <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-700">
-            Local motor-positioning test only. It does not dispense medication and writes no dose,
-            inventory, device-event, voice, or agent data to Convex.
-          </p>
-        </div>
-        <div className="flex flex-col items-end gap-2">
-          <span className={`rounded-full px-4 py-2 text-sm font-bold ${connected ? "bg-emerald-100 text-emerald-800" : "bg-slate-200 text-slate-700"}`}>
-            {connected ? "Connected" : "Disconnected"}
-          </span>
-          <span aria-live="polite" className="text-sm font-semibold text-slate-700">
-            {phaseLabel(motorPhase, connected)}
-          </span>
-        </div>
+    <section aria-label="Supervised hardware controls" className="space-y-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <StatusPill tone={connected ? "green" : "slate"} dot>{connected ? "Connected" : "Disconnected"}</StatusPill>
+        <StatusPill tone="amber">Real hardware · supervised</StatusPill>
       </div>
 
-      <div className="mt-5 flex flex-wrap gap-3">
-        <button type="button" onClick={connect} disabled={busy} className="min-h-11 rounded-full bg-sky-700 px-5 py-2 text-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-50">
-          {busyAction === "connect" ? "Connecting…" : connected ? "Reconnect Arduino" : "Connect to Arduino"}
-        </button>
-        <button type="button" onClick={getStatus} disabled={busy || !connected} className="min-h-11 rounded-full border border-sky-300 bg-white px-5 py-2 text-sm font-bold text-sky-800 disabled:cursor-not-allowed disabled:opacity-50">
-          {busyAction === "status" ? "Reading…" : "Get device status"}
-        </button>
+      <div className="relative px-2 pt-1">
+        <div className="mx-auto w-[min(100%,14.5rem)]">
+          <CarouselGraphic variant="placeholder" testTargetSlot={6} />
+        </div>
+        <p className="mt-1 text-center text-[0.7rem] leading-4 text-[#64748b]">Illustrative placeholder · not live position</p>
       </div>
 
-      <div className="mt-5 rounded-xl border border-rose-300 bg-rose-50 p-4">
-        <p className="font-extrabold text-rose-900">EMPTY CAROUSEL ONLY — NO MEDICATIONS</p>
-        <div className="mt-3 grid gap-3 text-sm text-slate-800">
-          <label className="flex items-start gap-3">
-            <input type="checkbox" checked={carouselEmpty} onChange={(event) => setCarouselEmpty(event.target.checked)} disabled={motorDispatched} className="mt-1 size-4" />
+      <div aria-live="polite" className={`ps-card flex items-center gap-3 px-3 py-2.5 ${attention ? "!border-[#f3b8b8]" : ""}`}>
+        <span aria-hidden="true" className={`grid size-9 shrink-0 place-items-center rounded-full ${attention ? "bg-[#fde4e4] text-[#b42323]" : statusPositive ? "bg-[#d9f5ef] text-[#0f766e]" : "bg-[#e8eef5] text-[#64748b]"}`}><Icon name={attention ? "alert" : statusPositive ? "check" : "info"} size={18} strokeWidth={2.2} /></span>
+        <span className="min-w-0 flex-1">
+          <span className="block text-sm font-semibold text-[#0f172a]">{statusTitle}</span>
+          <span className="block text-xs leading-5 text-[#64748b]">{statusDetail}</span>
+        </span>
+      </div>
+
+      <fieldset className="rounded-2xl border border-[#f3d4d4] bg-[#fffafa] px-3.5 pb-1.5 pt-1">
+        <legend className="px-1 text-[0.7rem] font-bold uppercase tracking-wide text-[#a32020]">Empty carousel only · no medications</legend>
+        <div className="text-[0.78rem] leading-[1.15rem] text-[#1e293b]">
+          <label className="flex min-h-11 items-center gap-3 py-1">
+            <input type="checkbox" checked={carouselEmpty} onChange={(event) => setCarouselEmpty(event.target.checked)} disabled={motorDispatched} className="size-5 shrink-0 accent-[#0f766e]" />
             <span>I physically confirmed the carousel is empty.</span>
           </label>
-          <label className="flex items-start gap-3">
-            <input type="checkbox" checked={alignedBeforeStartup} onChange={(event) => setAlignedBeforeStartup(event.target.checked)} disabled={motorDispatched} className="mt-1 size-4" />
+          <label className="flex min-h-11 items-center gap-3 py-1">
+            <input type="checkbox" checked={alignedBeforeStartup} onChange={(event) => setAlignedBeforeStartup(event.target.checked)} disabled={motorDispatched} className="size-5 shrink-0 accent-[#0f766e]" />
             <span>I physically aligned the device to Slot 0 before startup. This is not sensor-verified.</span>
           </label>
-          <label className="flex items-start gap-3">
-            <input type="checkbox" checked={movingPartsClear} onChange={(event) => setMovingPartsClear(event.target.checked)} disabled={motorDispatched} className="mt-1 size-4" />
+          <label className="flex min-h-11 items-center gap-3 py-1">
+            <input type="checkbox" checked={movingPartsClear} onChange={(event) => setMovingPartsClear(event.target.checked)} disabled={motorDispatched} className="size-5 shrink-0 accent-[#0f766e]" />
             <span>I confirmed hands, cables, and other objects are clear of moving parts.</span>
           </label>
         </div>
+      </fieldset>
 
-        <div className="mt-4 flex flex-wrap gap-3">
-          <button type="button" onClick={runMotorTest} disabled={runDisabled} className="min-h-11 rounded-full bg-rose-700 px-5 py-2 text-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-50">
-            {busyAction === "move" ? "Sending once…" : "Run Slot 6 Motor Test"}
-          </button>
-          <button type="button" onClick={getLastResult} disabled={busy || !connected || !operationId} className="min-h-11 rounded-full border border-amber-400 bg-white px-5 py-2 text-sm font-bold text-amber-900 disabled:cursor-not-allowed disabled:opacity-50">
-            {busyAction === "result" ? "Reconciling…" : "Get last result"}
-          </button>
-        </div>
+      <div>
+        <button type="button" onClick={runMotorTest} disabled={runDisabled} className="ps-cta flex min-h-[3.4rem] w-full items-center justify-center gap-2 rounded-full px-5 text-[1rem] font-semibold">
+          {busyAction === "move" ? "Sending once…" : "Run Slot 6 Test (Supervised)"}
+          <Icon name="arrow" size={18} />
+        </button>
+        {runDisabled && runBlockers.length > 0 && !busy && (
+          <p className="mt-2 px-2 text-xs leading-5 text-[#64748b]">To enable: {runBlockers.join("; ")}.</p>
+        )}
         {motorDispatched && (
-          <p className="mt-3 text-xs font-semibold leading-5 text-rose-900">
-            MOVE is locked for this page session. Reconnecting and Get last result are read-only and will not resend it.
+          <p className="mt-2 px-2 text-xs font-semibold leading-5 text-[#a32020]">
+            MOVE is locked for this page session. Reconnecting and Last result are read-only and will not resend it.
           </p>
         )}
       </div>
 
-      <div className="mt-5 rounded-xl border border-amber-200 bg-white p-4 text-sm">
-        <p className="font-semibold text-slate-900">Last Arduino response</p>
-        <p aria-live="polite" className="mt-1 font-mono text-slate-700">{lastResponse ?? "No response read yet"}</p>
-        {operationId && <p className="mt-2 text-xs text-slate-600">Operation ID: <span className="font-mono">{operationId}</span></p>}
-        <p className="mt-2 text-xs text-slate-600">
-          Dispatch evidence: <strong>{dispatchEvidenceLabels[dispatchEvidence]}</strong>
-        </p>
+      <div className="ps-card grid grid-cols-3 divide-x divide-[#e6eef6] overflow-hidden">
+        <button type="button" onClick={connect} disabled={busy} className="ps-focus flex min-h-[3.8rem] flex-col items-center justify-center gap-1 px-1 text-center text-[0.7rem] font-medium text-[#475569] disabled:opacity-50">
+          <span className="text-[#0f766e]"><Icon name="bluetooth" size={21} /></span>
+          {busyAction === "connect" ? "Connecting…" : connected ? "Reconnect" : "Pair device"}
+        </button>
+        <button type="button" onClick={getStatus} disabled={busy || !connected} className="ps-focus flex min-h-[3.8rem] flex-col items-center justify-center gap-1 px-1 text-center text-[0.7rem] font-medium text-[#475569] disabled:opacity-50">
+          <span className="text-[#0f766e]"><Icon name="info" size={21} /></span>
+          {busyAction === "status" ? "Reading…" : "Device status"}
+        </button>
+        <button type="button" onClick={getLastResult} disabled={busy || !connected || !operationId} className="ps-focus flex min-h-[3.8rem] flex-col items-center justify-center gap-1 px-1 text-center text-[0.7rem] font-medium text-[#475569] disabled:opacity-50">
+          <span className="text-[#0f766e]"><Icon name="refresh" size={21} /></span>
+          {busyAction === "result" ? "Reconciling…" : "Last result"}
+        </button>
       </div>
+      {!operationId && <p className="-mt-2 px-2 text-xs text-[#64748b]">Last result becomes available after a Slot 6 test has been sent.</p>}
+
+      {onOpenSetup && (
+        <button type="button" onClick={onOpenSetup} className="ps-card ps-focus flex min-h-14 w-full items-center gap-3 px-3 py-2 text-left">
+          <span aria-hidden="true" className="grid size-10 shrink-0 place-items-center rounded-xl bg-[#e3efff] text-[#1e4f8a]"><Icon name="gear" size={22} /></span>
+          <span className="min-w-0 flex-1"><span className="block text-sm font-semibold text-[#0f172a]">Setup &amp; slot mapping</span><span className="block text-xs text-[#64748b]">Slots 1–7 for medications · Slot 0 is home</span></span>
+          <Icon name="chevron" size={18} className="text-[#94a3b8]" />
+        </button>
+      )}
+
+      <section id="dispenser-activity" aria-labelledby="dispenser-activity-title" className="scroll-mt-4">
+        <SectionTitle>
+          <span id="dispenser-activity-title">Recent activity</span>
+        </SectionTitle>
+        <div className="ps-card mt-2 divide-y divide-[#e6eef6]">
+          {activity.length === 0 ? (
+            <p className="px-3 py-3 text-sm text-[#64748b]">No hardware activity in this browser session yet.</p>
+          ) : activity.map((item, index) => (
+            <div key={`${item.title}:${index}`} className="flex items-start gap-3 px-3 py-2.5">
+              <span aria-hidden="true" className={`mt-0.5 grid size-7 shrink-0 place-items-center rounded-full ${item.tone === "ok" ? "bg-[#d9f5ef] text-[#0f766e]" : item.tone === "warn" ? "bg-[#fde4e4] text-[#b42323]" : "bg-[#e3efff] text-[#1e4f8a]"}`}><Icon name={item.tone === "warn" ? "alert" : item.tone === "ok" ? "check" : "info"} size={16} strokeWidth={2.2} /></span>
+              <span className="min-w-0"><span className="block text-sm font-semibold text-[#0f172a]">{item.title}</span><span className="block break-all font-mono text-[0.68rem] leading-4 text-[#64748b]">{item.detail}</span></span>
+            </div>
+          ))}
+        </div>
+      </section>
 
       {motorPhase === "STEPS_COMPLETED" && (
-        <label className="mt-4 flex items-start gap-3 rounded-xl border border-emerald-300 bg-emerald-50 p-4 text-sm text-emerald-950">
-          <input type="checkbox" checked={slotZeroVerified} onChange={(event) => setSlotZeroVerified(event.target.checked)} className="mt-1 size-4" />
+        <label className="flex min-h-11 items-start gap-3 rounded-2xl border border-[#a7e3d6] bg-[#eefaf6] p-3.5 text-sm text-[#0b4f45]">
+          <input type="checkbox" checked={slotZeroVerified} onChange={(event) => setSlotZeroVerified(event.target.checked)} className="mt-0.5 size-5 shrink-0 accent-[#0f766e]" />
           <span>
             I physically inspected and verified that the carousel returned to Slot 0 afterward.
             {slotZeroVerified && <strong className="mt-1 block">Manual Slot 0 verification acknowledged.</strong>}
@@ -326,10 +385,17 @@ export function ArduinoStatusPanel() {
         </label>
       )}
 
-      <p className="mt-3 text-xs leading-5 text-slate-600">
-        STARTED and DONE are browser-observed firmware responses, not authenticated evidence. DONE means only that the programmed motor-step sequence completed; it does not prove physical alignment, pill release, collection, or ingestion.
-      </p>
-      {error && <p role="alert" className="mt-3 rounded-xl bg-rose-100 p-3 text-sm text-rose-900">{error}</p>}
+      <div className="px-1 text-xs leading-5 text-[#64748b]">
+        <p><span className="font-semibold text-[#334155]">Last Arduino response:</span> <span aria-live="polite" className="font-mono">{lastResponse ?? "none read yet"}</span></p>
+        <details className="mt-1">
+          <summary className="ps-focus min-h-11 cursor-pointer py-2.5 font-semibold text-[#0f766e]">About this test and illustration</summary>
+          <p>The 3D viewer arrives in H5B. The illustration does not show live position or sensor data; Slot 6 is highlighted only as the supported test target.</p>
+        <p className="mt-1.5">
+            Local motor-positioning test only on an empty carousel. It does not dispense medication and writes no dose, inventory, device-event, voice, or agent data to Convex. STARTED and DONE are browser-observed firmware responses, not authenticated evidence. DONE means only that the programmed motor-step sequence completed; it does not prove physical alignment, pill release, collection, or ingestion.
+          </p>
+        </details>
+      </div>
+      {error && <p role="alert" className="rounded-2xl bg-[#fde4e4] p-3 text-sm text-[#8f1d1d]">{error}</p>}
     </section>
   );
 }

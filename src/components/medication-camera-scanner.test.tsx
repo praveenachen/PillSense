@@ -25,12 +25,12 @@ describe("MedicationScanViewport", () => {
 });
 
 describe("MedicationCameraScanner", () => {
-  it("offers a photo upload fallback and says images are not saved", () => {
+  it("shows only the camera controls, with no upload option or helper copy", () => {
     const html = renderToStaticMarkup(<MedicationCameraScanner onScan={() => undefined} />);
-    expect(html).toContain("Upload a photo");
-    expect(html).toContain('type="file"');
-    expect(html).toContain('accept="image/*"');
-    expect(html).toContain("are not saved");
+    expect(html).toContain("Start camera");
+    expect(html).not.toContain("Upload");
+    expect(html).not.toContain('type="file"');
+    expect(html).not.toContain("Use the camera");
   });
 
   it("uses the dark design tokens by default and a light variant for the legacy caregiver page", () => {

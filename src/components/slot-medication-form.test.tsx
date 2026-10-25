@@ -14,10 +14,18 @@ describe("mobile slot medication form", () => {
   it("keeps a scanned Advil bottle unscheduled with no inferred supply or hardware pill", () => {
     const scan = parseMedicationScan({ brand: "Advil", activeIngredient: "ibuprofen", strength: "200 mg", dosageForm: "tablet", din: null, ndc: null, quantity: null, otherVisibleDetails: [] });
     const form = new FormData();
-    form.set("name", "Advil 200 mg tablet");
+    form.set("name", "ibuprofen");
     const value = buildSlotMedicationInput({ slot: 2, form, days: ["MON"], scheduled: false, scan });
-    expect(value).toMatchObject({ name: "Advil 200 mg tablet", scheduled: false, instructions: "", localTime: "", weekdays: [], demoInventory: 0, productDetails: { activeIngredient: "ibuprofen", strength: "200 mg" } });
+    expect(value).toMatchObject({ name: "ibuprofen", scheduled: false, instructions: "", localTime: "", weekdays: [], demoInventory: 0, productDetails: { activeIngredient: "ibuprofen", strength: "200 mg" } });
     expect(value.supplyCount).toBeUndefined();
+  });
+
+  it("assumes the package quantity unless a verified supply is entered", () => {
+    const scan = parseMedicationScan({ brand: "Advil", activeIngredient: "ibuprofen", strength: "200 mg", dosageForm: "tablet", din: null, ndc: null, quantity: "100 tablets", otherVisibleDetails: [] });
+    const assumed = new FormData(); assumed.set("name", "ibuprofen"); assumed.set("count", "");
+    expect(buildSlotMedicationInput({ slot: 2, form: assumed, days: [], scheduled: false, scan }).supplyCount).toBe(100);
+    const verified = new FormData(); verified.set("name", "ibuprofen"); verified.set("count", "60");
+    expect(buildSlotMedicationInput({ slot: 2, form: verified, days: [], scheduled: false, scan }).supplyCount).toBe(60);
   });
 
   it("preserves explicit manual scheduling and caregiver-entered count", () => {

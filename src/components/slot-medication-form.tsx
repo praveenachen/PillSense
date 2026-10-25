@@ -4,7 +4,7 @@ import { useState, type FormEvent, type ReactNode } from "react";
 import { INSTRUCTION_OPTIONS } from "../../convex/lib/instructionOptions";
 import { Icon } from "./mobile-ui";
 import { MedicationCameraScanner } from "./medication-camera-scanner";
-import { productDetailsForSave, scanFormDefaults, type MedicationScan } from "../lib/medication-scan";
+import { packageCount, productDetailsForSave, scanFormDefaults, type MedicationScan } from "../lib/medication-scan";
 import { medicationSaveError } from "../lib/medication-save-error";
 
 const WEEKDAYS = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"] as const;
@@ -35,7 +35,8 @@ export function buildSlotMedicationInput(args: {
 }): SlotMedicationInput {
   const { slot, form, days, scheduled, scan } = args;
   const countText = String(form.get("count") ?? "").trim();
-  const count = countText ? Number(countText) : undefined;
+  // Scanned packages assume the label quantity unless the caregiver enters a verified supply.
+  const count = countText ? Number(countText) : scan ? packageCount(scan.quantity) ?? undefined : undefined;
   const dose = Number(form.get("dose"));
   const unit = String(form.get("unit"));
   return {
@@ -115,11 +116,10 @@ export function SlotMedicationForm({ slot, onSave, onCancel, unavailableMessage 
         }} />
         {scan && <section className="space-y-3 rounded-pd-chip border border-pd-accent-soft/40 bg-pd-accent/10 p-3">
           <h3 className="text-sm font-semibold text-pd-text">Review visible label details</h3>
-          <p className="text-xs text-pd-muted">Correct anything unreadable. A package count is not a verified dispenser count.</p>
+          <p className="text-xs text-pd-muted">Correct anything unreadable.</p>
           {([ ["brand", "Brand"], ["activeIngredient", "Active ingredient"], ["strength", "Strength"], ["dosageForm", "Dosage form"], ["din", "DIN"], ["ndc", "NDC"], ["quantity", "Package quantity"] ] as const).map(([field, label]) =>
             <Field key={field} label={label} htmlFor={`slot-${field}`}><input id={`slot-${field}`} value={scan[field] ?? ""} maxLength={160} onChange={(event) => setScan({ ...scan, [field]: event.target.value || null })} className={input} /></Field>
           )}
-          {scan.otherVisibleDetails.length > 0 && <p className="text-xs text-pd-muted">Other visible details: {scan.otherVisibleDetails.join(" · ")}</p>}
         </section>}
       </>}
       <Field label="Medication name" htmlFor="slot-name"><input id="slot-name" name="name" required maxLength={120} placeholder="e.g. Advil 200 mg tablet" autoComplete="off" value={name} onChange={(event) => setName(event.target.value)} className={input} /></Field>
@@ -131,7 +131,7 @@ export function SlotMedicationForm({ slot, onSave, onCancel, unavailableMessage 
             <select name="unit" aria-label="Dose unit" className={input}>{UNITS.map((unit) => <option key={unit} value={unit}>{unit}</option>)}</select>
           </div>
         </Field>}
-        <Field label={mode === "scan" ? "Verified supply (optional)" : "Pills loaded"} htmlFor="slot-count"><input id="slot-count" name="count" type="number" inputMode="numeric" min={0} max={10000} defaultValue={mode === "scan" ? "" : 30} required={mode === "manual"} className={input} /></Field>
+        <Field label={mode === "scan" ? "Verified supply (optional)" : "Pills loaded"} htmlFor="slot-count"><input id="slot-count" name="count" type="number" inputMode="numeric" min={0} max={10000} defaultValue={mode === "scan" ? "" : 30} placeholder={mode === "scan" && scan ? (packageCount(scan.quantity)?.toString() ?? "") : undefined} required={mode === "manual"} className={input} /></Field>
       </div>
 
       {mode === "scan" && <label className="flex items-start gap-2 rounded-pd-chip border border-pd-line p-3 text-sm text-pd-text"><input type="checkbox" checked={scheduled} onChange={(event) => setScheduled(event.target.checked)} className="mt-1" /><span><strong>Configure scheduled dispensing</strong><br /><span className="text-xs text-pd-muted">Leave off for OTC medication. Scanning never sets a daily schedule.</span></span></label>}

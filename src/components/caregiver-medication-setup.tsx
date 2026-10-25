@@ -140,13 +140,12 @@ function AuthenticatedMedicationSetup() {
         }} />
         {scan && <div className="mt-5 rounded-xl border border-sky-200 bg-sky-50 p-4">
           <h3 className="font-semibold">Visible label details · review and correct</h3>
-          <p className="mt-1 text-xs text-slate-600">Blank fields were not readable. Package quantity is not the pill count loaded into the dispenser.</p>
+          <p className="mt-1 text-xs text-slate-600">Blank fields were not readable. The saved supply assumes the package quantity unless you enter a verified count.</p>
           <div className="mt-3 grid gap-3 sm:grid-cols-2">
             {([ ["brand", "Brand"], ["activeIngredient", "Active ingredient"], ["strength", "Strength"], ["dosageForm", "Dosage form"], ["din", "DIN"], ["ndc", "NDC"], ["quantity", "Package quantity"] ] as const).map(([field, label]) =>
               <Field key={field} label={label} htmlFor={`scan-${field}`}><input id={`scan-${field}`} value={scan[field] ?? ""} maxLength={160} onChange={(event) => setScan({ ...scan, [field]: event.target.value || null })} className="input" /></Field>
             )}
           </div>
-          {scan.otherVisibleDetails.length > 0 && <p className="mt-3 text-xs text-slate-600">Other visible details: {scan.otherVisibleDetails.join(" · ")}</p>}
         </div>}
 
         <div className="mt-6 grid gap-5 sm:grid-cols-2">

@@ -30,8 +30,17 @@ export function parseMedicationScan(value: unknown): MedicationScan {
   return { ...result, otherVisibleDetails: (details ?? []).map((item: string) => item.trim()).filter(Boolean) };
 }
 
+/** Medication name is the active ingredient; the brand is only a fallback when no ingredient was readable. */
 export function scanName(scan: MedicationScan): string {
-  return [scan.brand, scan.strength, scan.dosageForm].filter(Boolean).join(" ");
+  return scan.activeIngredient?.trim() || scan.brand?.trim() || "";
+}
+
+/** Pill count from a label quantity such as "100 tablets" or "2 x 50"; null when no count is readable. */
+export function packageCount(quantity: string | null | undefined): number | null {
+  if (!quantity) return null;
+  const multi = quantity.match(/(\d{1,4})\s*[x×]\s*(\d{1,4})/i);
+  const count = multi ? Number(multi[1]) * Number(multi[2]) : Number(quantity.match(/\d{1,5}/)?.[0]);
+  return Number.isInteger(count) && count > 0 && count <= 10000 ? count : null;
 }
 
 export function scanFormDefaults(scan: MedicationScan) {

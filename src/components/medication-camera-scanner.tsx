@@ -28,8 +28,6 @@ const tones: Record<ScannerTone, { section: string; heading: string; body: strin
   },
 };
 
-const MAX_UPLOAD_BYTES = 15_000_000;
-
 /** True when the Hardware Lab's Python/OpenCV bridge currently owns the physical camera. An unreachable bridge means it is not in use. */
 async function hardwareLabHoldsCamera() {
   try {
@@ -43,30 +41,12 @@ async function hardwareLabHoldsCamera() {
   }
 }
 
-/** Downscales a chosen photo to the same JPEG the camera path sends. Nothing is stored. */
-async function jpegFromFile(file: File): Promise<string> {
-  if (!file.type.startsWith("image/")) throw new Error("Choose an image file.");
-  if (file.size > MAX_UPLOAD_BYTES) throw new Error("That photo is too large. Choose one under 15 MB.");
-  const bitmap = await createImageBitmap(file).catch(() => { throw new Error("That image could not be read. Try a JPEG or PNG photo."); });
-  try {
-    const scale = Math.min(1, 1280 / bitmap.width);
-    const canvas = document.createElement("canvas");
-    canvas.width = Math.max(1, Math.round(bitmap.width * scale));
-    canvas.height = Math.max(1, Math.round(bitmap.height * scale));
-    const context = canvas.getContext("2d");
-    if (!context) throw new Error("This browser cannot prepare the photo.");
-    context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-    return canvas.toDataURL("image/jpeg", 0.82);
-  } finally {
-    bitmap.close();
-  }
-}
+const clockNow = () => Date.now();
 
 type CameraState = "idle" | "starting" | "ready" | "analyzing" | "complete" | "error";
 
 export function MedicationCameraScanner({ onScan, tone = "dark" }: { onScan: (scan: MedicationScan) => void; tone?: ScannerTone }) {
   const styles = tones[tone];
-  const fileInput = useRef<HTMLInputElement>(null);
   const video = useRef<HTMLVideoElement>(null);
   const stream = useRef<MediaStream | null>(null);
   const previous = useRef<Uint8ClampedArray | null>(null);
@@ -109,7 +89,7 @@ export function MedicationCameraScanner({ onScan, tone = "dark" }: { onScan: (sc
     previous.current = null; stableFrames.current = 0;
     if (await hardwareLabHoldsCamera()) {
       if (scanGeneration.current !== generation) return;
-      setMessage("The Hardware Lab camera is in use, so the browser camera is paused. Upload a photo of the label instead, or stop the Hardware Lab camera first.");
+      setMessage("The Hardware Lab camera is in use, so the browser camera is paused. Stop the Hardware Lab camera first, then try again.");
       setState("error");
       return;
     }
@@ -150,7 +130,7 @@ export function MedicationCameraScanner({ onScan, tone = "dark" }: { onScan: (sc
 
   async function analyze() {
     if (inFlight.current || !navigator.onLine) { if (!navigator.onLine) setMessage("Offline. Reconnect before analyzing a photo."); return; }
-    if (Date.now() - lastRequestAt.current < 8_000) { setMessage("Please wait a few seconds before scanning again."); return; }
+    if (clockNow() - lastRequestAt.current < 8_000) { setMessage("Please wait a few seconds before scanning again."); return; }
     const captured = capture();
     if (!captured) { setMessage("Camera image is not ready. Try again."); return; }
     if (lastSuccessfulImage.current) {
@@ -166,7 +146,7 @@ export function MedicationCameraScanner({ onScan, tone = "dark" }: { onScan: (sc
     const generation = scanGeneration.current;
     const controller = new AbortController();
     requestController.current = controller;
-    lastRequestAt.current = Date.now();
+    lastRequestAt.current = clockNow();
     setCapturedImage(captured.image);
     setState("analyzing"); setMessage(null);
     try {
@@ -200,29 +180,10 @@ export function MedicationCameraScanner({ onScan, tone = "dark" }: { onScan: (sc
     }
   }
 
-  async function onFile(event: React.ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-    event.target.value = "";
-    if (!file || inFlight.current) return;
-    if (Date.now() - lastRequestAt.current < 8_000) { setMessage("Please wait a few seconds before scanning again."); return; }
-    if (!navigator.onLine) { setMessage("Offline. Reconnect before analyzing a photo."); return; }
-    stream.current?.getTracks().forEach((track) => track.stop());
-    stream.current = null;
-    if (video.current) video.current.srcObject = null;
-    completed.current = false;
-    try {
-      setMessage(null);
-      await submit(await jpegFromFile(file), null);
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "That photo could not be scanned.");
-      setState("error");
-    }
-  }
-
   useEffect(() => {
     if (state !== "ready") return;
     const timer = window.setInterval(() => {
-      if (inFlight.current || completed.current || Date.now() - lastRequestAt.current < 10_000 || !navigator.onLine) return;
+      if (inFlight.current || completed.current || clockNow() - lastRequestAt.current < 10_000 || !navigator.onLine) return;
       const source = video.current;
       if (!source || source.readyState < 2) return;
       const canvas = document.createElement("canvas"); canvas.width = 64; canvas.height = 48;
@@ -245,16 +206,12 @@ export function MedicationCameraScanner({ onScan, tone = "dark" }: { onScan: (sc
     return () => window.clearInterval(timer);
   });
 
-  const busy = state === "starting" || state === "analyzing";
   return <section className={styles.section}>
     <h3 className={styles.heading}>Scan medication packaging</h3>
-    <p className={styles.body}>Use the camera or upload a photo. Hold the label steady and readable; automatic capture waits for a stable image. Photos are sent once for analysis and are not saved.</p>
     <MedicationScanViewport state={state} capturedImage={capturedImage} videoRef={video} />
     <div className="mt-3 flex flex-wrap gap-2">
       {state === "idle" || state === "error" ? <button type="button" onClick={() => void start()} className={styles.primary}>Start camera</button> : state !== "complete" && <button type="button" onClick={stop} className={styles.secondary}>{state === "analyzing" ? "Cancel scan" : "Stop camera"}</button>}
       <button type="button" disabled={state !== "ready"} onClick={() => void analyze()} className={styles.outline}>Capture now</button>
-      <button type="button" disabled={busy} onClick={() => fileInput.current?.click()} className={styles.secondary}>Upload a photo</button>
-      <input ref={fileInput} type="file" accept="image/*" aria-label="Upload a photo of the medication label" onChange={(event) => void onFile(event)} className="hidden" />
       {state === "complete" && <button type="button" onClick={() => void start()} className={styles.secondary}>Scan again</button>}
     </div>
     {state === "starting" && <p role="status" className={styles.status}>Waiting for camera permission…</p>}

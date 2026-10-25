@@ -3,9 +3,34 @@ const TIMEOUT_MS = 8_000;
 
 export type WalgreensMode = "SANDBOX" | "MOCK";
 
+export type WalgreensSafeDiagnostics = {
+  httpStatus?: number;
+  upstreamCode?: string;
+};
+
 export class WalgreensAdapterError extends Error {
-  constructor(readonly code: string) {
+  constructor(
+    readonly code: string,
+    readonly diagnostics: WalgreensSafeDiagnostics = {},
+  ) {
     super(code);
+  }
+}
+
+function safeUpstreamCode(value: unknown): string | undefined {
+  if (typeof value !== "string" && typeof value !== "number") return undefined;
+  const code = String(value).trim();
+  return /^[A-Za-z0-9_.:-]{1,64}$/.test(code) ? code : undefined;
+}
+
+async function readJsonObject(response: Response): Promise<Record<string, unknown> | undefined> {
+  try {
+    const payload: unknown = await response.json();
+    return payload && typeof payload === "object" && !Array.isArray(payload)
+      ? payload as Record<string, unknown>
+      : undefined;
+  } catch {
+    return undefined;
   }
 }
 
@@ -72,18 +97,27 @@ export async function obtainRefillLandingUrl(input: {
     throw new WalgreensAdapterError(error instanceof Error && error.name === "TimeoutError"
       ? "WALGREENS_TIMEOUT" : "WALGREENS_NETWORK_ERROR");
   }
+  const payload = await readJsonObject(response);
+  const diagnostics: WalgreensSafeDiagnostics = {
+    httpStatus: response.status,
+    upstreamCode: safeUpstreamCode(payload?.errCode),
+  };
   if (response.status === 403 || response.status === 401) {
-    throw new WalgreensAdapterError("WALGREENS_CREDENTIALS_REJECTED");
+    throw new WalgreensAdapterError("WALGREENS_CREDENTIALS_REJECTED", diagnostics);
   }
-  if (!response.ok) throw new WalgreensAdapterError("WALGREENS_API_ERROR");
-  let payload: unknown;
-  try { payload = await response.json(); } catch { throw new WalgreensAdapterError("WALGREENS_INVALID_RESPONSE"); }
-  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
-    throw new WalgreensAdapterError("WALGREENS_INVALID_RESPONSE");
+  if (!response.ok) throw new WalgreensAdapterError("WALGREENS_API_ERROR", diagnostics);
+  if (!payload) {
+    throw new WalgreensAdapterError("WALGREENS_INVALID_RESPONSE", diagnostics);
   }
-  const result = payload as Record<string, unknown>;
-  if (result.errCode && result.errCode !== "0" && result.errCode !== 0) {
-    throw new WalgreensAdapterError("WALGREENS_API_ERROR");
+  if (payload.errCode && payload.errCode !== "0" && payload.errCode !== 0) {
+    throw new WalgreensAdapterError("WALGREENS_API_ERROR", diagnostics);
   }
-  return validateLandingUrl(result.landingUrl);
+  try {
+    return validateLandingUrl(payload.landingUrl);
+  } catch (error) {
+    if (error instanceof WalgreensAdapterError) {
+      throw new WalgreensAdapterError(error.code, diagnostics);
+    }
+    throw error;
+  }
 }

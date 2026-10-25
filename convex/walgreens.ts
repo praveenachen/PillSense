@@ -156,6 +156,14 @@ export const createSession = action({
         : { status: finished.status, landingUrl: null, environment };
     } catch (error) {
       const errorCode = error instanceof WalgreensAdapterError ? error.code : "WALGREENS_API_ERROR";
+      const diagnostics = error instanceof WalgreensAdapterError ? error.diagnostics : {};
+      // Deliberately log only protocol-level classifications. Never include the
+      // request, response body, checkout URL, callback token, Rx number, or IDs.
+      console.error("Walgreens sandbox checkout request failed", {
+        errorCode,
+        httpStatus: diagnostics.httpStatus ?? null,
+        upstreamCode: diagnostics.upstreamCode ?? null,
+      });
       const finished = await ctx.runMutation(internal.walgreens.finishSession, {
         checkoutId: args.checkoutId, idempotencyKey, errorCode, now: Date.now(),
       });

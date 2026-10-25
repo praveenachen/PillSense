@@ -74,6 +74,7 @@ export default defineSchema({
     })),
     active: v.boolean(),
     createdBy: v.id("appUsers"),
+    demoSeedKey: v.optional(v.string()),
     createdAt: v.number(),
   }).index("by_patient", ["patientId"]),
 
@@ -556,6 +557,65 @@ export default defineSchema({
     .index("by_runId", ["runId"])
     .index("by_patient_and_status", ["patientId", "status"]),
 
+  medicationInteractionSessions: defineTable({
+    occurrenceId: v.id("doseOccurrences"),
+    patientId: v.id("appUsers"),
+    medicationId: v.id("medications"),
+    firstInteraction: v.boolean(),
+    state: v.union(
+      v.literal("AWAITING_READINESS"),
+      v.literal("AWAITING_EDUCATION_CHOICE"),
+      v.literal("AWAITING_CONTINUE"),
+      v.literal("READY_FOR_SUPERVISED_ROUTINE"),
+      v.literal("DECLINED"),
+      v.literal("COMPLETED"),
+    ),
+    greetingStatus: v.union(
+      v.literal("NOT_ISSUED"),
+      v.literal("CLAIMED"),
+      v.literal("PLAYED"),
+      v.literal("PLAYBACK_BLOCKED"),
+      v.literal("FAILED"),
+    ),
+    cameraConsent: v.boolean(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_occurrence", ["occurrenceId"])
+    .index("by_patient_and_medication", ["patientId", "medicationId"]),
+
+  medicationInteractionEvents: defineTable({
+    sessionId: v.id("medicationInteractionSessions"),
+    occurrenceId: v.id("doseOccurrences"),
+    patientId: v.id("appUsers"),
+    type: v.union(
+      v.literal("SESSION_CREATED"),
+      v.literal("GREETING_CLAIMED"),
+      v.literal("GREETING_PLAYED"),
+      v.literal("GREETING_PLAYBACK_BLOCKED"),
+      v.literal("GREETING_FAILED"),
+      v.literal("PATIENT_INTENT"),
+      v.literal("EDUCATION_PRESENTED"),
+      v.literal("CAMERA_CONSENT_CHANGED"),
+      v.literal("ROUTINE_READY"),
+      v.literal("SESSION_DECLINED"),
+      v.literal("SESSION_COMPLETED"),
+    ),
+    intent: v.optional(
+      v.union(
+        v.literal("YES"),
+        v.literal("NO"),
+        v.literal("REPEAT"),
+        v.literal("REQUEST_MORE_INFORMATION"),
+      ),
+    ),
+    detailCode: v.optional(v.string()),
+    source: v.union(v.literal("VOICE"), v.literal("TEXT"), v.literal("SYSTEM")),
+    occurredAt: v.number(),
+  })
+    .index("by_session_and_occurredAt", ["sessionId", "occurredAt"])
+    .index("by_patient_and_occurredAt", ["patientId", "occurredAt"]),
+
   agentRuns: defineTable({
     runId: v.string(),
     careCaseId: v.optional(v.id("careCases")),
@@ -568,7 +628,7 @@ export default defineSchema({
       v.literal("REFILL_INVESTIGATION"),
     ),
     source: v.optional(
-      v.union(v.literal("CAREGIVER_UI"), v.literal("AGENTVERSE")),
+      v.union(v.literal("CAREGIVER_UI"), v.literal("AGENTVERSE"), v.literal("AUTOMATION")),
     ),
     agentverseRequestId: v.optional(v.id("agentverseRequests")),
     status: v.union(

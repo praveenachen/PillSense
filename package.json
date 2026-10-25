@@ -8,7 +8,12 @@
     "start": "next start",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "demo:seed": "node scripts/demo-cli.mjs seed",
+    "demo:reset": "node scripts/demo-cli.mjs reset",
+    "demo:scenario": "node scripts/demo-cli.mjs scenario",
+    "demo:status": "node scripts/demo-cli.mjs status",
+    "demo:advance-missed-dose": "node scripts/demo-cli.mjs advance-missed-dose"
   },
   "dependencies": {
     "@clerk/nextjs": "^7.9.19",

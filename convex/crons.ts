@@ -10,4 +10,11 @@ crons.interval(
   {},
 );
 
+crons.interval(
+  "complete unclaimed synthetic investigations with deterministic fallback",
+  { minutes: 1 },
+  internal.agentService.completePendingFallbacks,
+  {},
+);
+
 export default crons;

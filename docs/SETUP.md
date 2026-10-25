@@ -20,6 +20,8 @@ Keep configuration split by runtime:
 | `.env.fetch` | `CONVEX_AGENT_URL`, `PILLSENSE_AGENT_SERVICE_SECRET`, stable uAgent seeds, derived agent addresses, synthetic case alias, bounded polling settings | Local Fetch.ai mailbox agents only |
 | Convex development environment | `PILLSENSE_AGENT_SERVICE_SECRET`, `PILLSENSE_AGENTVERSE_ALLOWED_SENDER`, and the deployed Clerk issuer configuration | Server-side bridge authentication, exact uAgent sender allowlist, and Clerk JWT validation |
 
+H6C's synthetic demo CLI also requires `PILLSENSE_DEMO_ENVIRONMENT=development` and the exact authorized caregiver `PILLSENSE_DEMO_OPERATOR_TOKEN_IDENTIFIER` both locally and in the existing Convex development environment. See `docs/DEMO_RUNBOOK.md`; the CLI refuses production deployments and never initiates hardware, camera, model, or pharmacy side effects.
+
 `PILLSENSE_AGENT_SERVICE_SECRET` must have the same value in `.env.agent` and the existing Convex development environment. It must not be placed in `.env.local`, prefixed with `NEXT_PUBLIC_`, or exposed to frontend code. `.env.example` and `.env.agent.example` contain names and placeholders only.
 
 M7 adds `.env.fetch.example`. The real `.env.fetch`, agent seed phrases, service secret, preauthorized alias, and Agentverse addresses remain server-only and gitignored. ACP registration, ASI:One verification, and the optional two-uAgent demo are in `docs/AGENTVERSE.md`.

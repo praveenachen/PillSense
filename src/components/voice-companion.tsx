@@ -2,6 +2,7 @@
 
 import { useConvexAuth, useMutation, useQuery } from "convex/react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import type { Id } from "../../convex/_generated/dataModel";
 import { api } from "../../convex/_generated/api";
 import { VoiceView, type VoiceMessage } from "./voice-view";
@@ -30,6 +31,10 @@ function AuthenticatedVoiceCompanion() {
   const doses = useQuery(api.occurrences.listForPatient, { now });
   const reportIngestion = useMutation(api.dispensing.reportIngestion);
   const reportDeviceIssue = useMutation(api.deviceIssues.report);
+  const claimGreeting = useMutation(api.medicationSessions.claimGreeting);
+  const recordGreetingOutcome = useMutation(api.medicationSessions.recordGreetingOutcome);
+  const respondToSession = useMutation(api.medicationSessions.respond);
+  const setCameraConsent = useMutation(api.medicationSessions.setCameraConsent);
   const [phase, setPhase] = useState<Phase>("IDLE");
   const [connection, setConnection] = useState<"CHECKING" | "READY" | "TEXT_ONLY">("CHECKING");
   const [caption, setCaption] = useState("");
@@ -69,7 +74,7 @@ function AuthenticatedVoiceCompanion() {
     setCaption(text);
     if (recordMessage) addMessage("assistant", text);
     setError(null);
-    if (connection === "TEXT_ONLY") return;
+    if (connection === "TEXT_ONLY") return false;
     setPhase("PROCESSING");
     const controller = new AbortController();
     requestRef.current = controller;
@@ -86,9 +91,11 @@ function AuthenticatedVoiceCompanion() {
       audio.onerror = () => { setPhase("IDLE"); setError("Audio playback failed. The message remains available as text."); };
       setPhase("SPEAKING");
       await audio.play();
+      return true;
     } catch (caught) {
       if ((caught as Error).name !== "AbortError") setError(errorMessage(caught));
       setPhase("IDLE");
+      return false;
     } finally { requestRef.current = null; }
   }, [addMessage, connection, stopSpeaking]);
 
@@ -108,6 +115,38 @@ function AuthenticatedVoiceCompanion() {
 
   const relevant = doses?.occurrences.filter((dose) => dose.ingestionReport === "UNREPORTED" && dose.scheduledFor <= now + 30 * 60_000) ?? [];
   const due = relevant.filter((dose) => now >= dose.eligibleFrom && now <= dose.expiresAt);
+  const interaction = useQuery(
+    api.medicationSessions.getForOccurrence,
+    due[0] ? { occurrenceId: due[0].id } : "skip",
+  );
+
+  async function startScheduledConversation() {
+    const dose = due[0];
+    if (!dose) return;
+    setError(null);
+    const claimed = await claimGreeting({ occurrenceId: dose.id });
+    const greeting = `Hello ${claimed.session.patientFirstName}. It's time for your ${claimed.session.medicationName}. Are you ready for your medication?`;
+    setCaption(greeting);
+    if (!claimed.shouldPlay) {
+      addMessage("assistant", greeting);
+      setSuccess("This reminder session was already started. Continue below; the greeting was not automatically replayed.");
+      return;
+    }
+    const played = await speak(greeting);
+    await recordGreetingOutcome({
+      sessionId: claimed.session.id,
+      outcome: played ? "PLAYED" : connection === "TEXT_ONLY" ? "PLAYBACK_BLOCKED" : "FAILED",
+    });
+  }
+
+  function sessionIntent(text: string) {
+    const value = text.toLowerCase().replace(/[^a-z ]/g, " ").replace(/\s+/g, " ").trim();
+    if (/^(yes|yes please|ready|i am ready|sure|continue|okay|ok)$/.test(value)) return "YES" as const;
+    if (/^(no|no thanks|not now|stop|decline)$/.test(value)) return "NO" as const;
+    if (/^(repeat|say that again|repeat that)$/.test(value)) return "REPEAT" as const;
+    if (/^(more information|tell me more|more info|what else)$/.test(value)) return "REQUEST_MORE_INFORMATION" as const;
+    return null;
+  }
 
   async function confirmPending() {
     if (!canCommitVoiceAction(Boolean(pending), true) || !pending) return;
@@ -125,11 +164,19 @@ function AuthenticatedVoiceCompanion() {
     } catch (caught) { setError(errorMessage(caught)); setPhase("IDLE"); }
   }
 
-  async function interpret(text: string) {
+  async function interpret(text: string, source: "VOICE" | "TEXT" = "TEXT") {
     const cleaned = text.trim();
     setTranscript(cleaned); setSuccess(null); setError(null);
     if (cleaned) addMessage("user", cleaned);
     if (!cleaned) { setNothingCaptured(true); return; }
+    const boundedIntent = interaction && !["DECLINED", "COMPLETED"].includes(interaction.state)
+      ? sessionIntent(cleaned)
+      : null;
+    if (boundedIntent && due[0]) {
+      const result = await respondToSession({ occurrenceId: due[0].id, intent: boundedIntent, source });
+      await speak(result.response);
+      return;
+    }
     if (pending) {
       const confirmation = parseConfirmation(cleaned);
       if (confirmation === "CONFIRM") { await confirmPending(); return; }
@@ -178,7 +225,7 @@ function AuthenticatedVoiceCompanion() {
       if (!response.ok) throw new Error(TRANSCRIPTION_UNAVAILABLE_MESSAGE);
       const data = await response.json() as { text?: unknown };
       if (typeof data.text !== "string") throw new Error("The transcription response was invalid.");
-      setPhase("IDLE"); await interpret(data.text);
+      setPhase("IDLE"); await interpret(data.text, "VOICE");
     } catch (caught) { if ((caught as Error).name !== "AbortError") setError(errorMessage(caught)); setPhase("IDLE"); }
     finally { requestRef.current = null; }
   }
@@ -227,7 +274,28 @@ function AuthenticatedVoiceCompanion() {
   }
 
   return (
-    <VoiceView
+    <div className="flex flex-1 flex-col gap-4">
+      {due[0] && (
+        <section className="pd-card border-pd-accent/25 p-4 text-pd-text" aria-label="Scheduled medication conversation">
+          <div className="flex items-start justify-between gap-3">
+            <div><p className="text-[0.65rem] font-bold uppercase tracking-[0.16em] text-pd-accent-soft">Due now · persisted session</p><h2 className="mt-1 text-base font-semibold">{due[0].medicationName}</h2><p className="mt-1 text-xs leading-5 text-pd-muted">{due[0].instructions || "Follow caregiver-approved instructions"} · Slot {due[0].slot}</p></div>
+            <span className="rounded-full bg-pd-accent/15 px-2.5 py-1 text-[0.65rem] font-semibold text-pd-accent-soft">{interaction?.state.replaceAll("_", " ").toLowerCase() ?? "not started"}</span>
+          </div>
+          <button type="button" onClick={() => void startScheduledConversation()} disabled={phase !== "IDLE"} className="pd-focus pd-press mt-3 min-h-11 w-full rounded-full bg-gradient-to-br from-pd-accent to-pd-accent-2 px-4 text-sm font-semibold text-white disabled:opacity-50">
+            {interaction ? "Continue scheduled conversation" : "Start scheduled conversation"}
+          </button>
+          {interaction && (
+            <div className="mt-3 space-y-2 border-t border-pd-line pt-3">
+              <label className="flex items-start gap-2 text-xs leading-5 text-pd-muted"><input type="checkbox" checked={interaction.cameraConsent} onChange={(event) => void setCameraConsent({ occurrenceId: due[0].id, consent: event.target.checked })} className="mt-1 accent-violet-500" /><span>I consent to a local, session-scoped camera observation. A gesture does not prove ingestion.</span></label>
+              <div className="grid grid-cols-2 gap-2">
+                <Link href="/hardware-lab" className="pd-focus flex min-h-10 items-center justify-center rounded-full border border-pd-line px-3 text-center text-xs font-semibold text-pd-text">Operator Hardware Lab</Link>
+                <button type="button" onClick={() => { setPending({ kind: "REPORT", occurrenceId: due[0].id, medicationName: due[0].medicationName, report: "TAKEN" }); void speak(`Confirm recording ${due[0].medicationName} as taken. This is a patient report, separate from camera and motor evidence.`); }} className="pd-focus min-h-10 rounded-full border border-pd-ok/35 px-3 text-xs font-semibold text-pd-ok">I took my medication</button>
+              </div>
+            </div>
+          )}
+        </section>
+      )}
+      <VoiceView
       phase={phase}
       connection={connection}
       caption={caption}
@@ -251,6 +319,7 @@ function AuthenticatedVoiceCompanion() {
       onChooseDose={chooseDose}
       onConfirm={() => void confirmPending()}
       onCancelPending={() => { setPending(null); void speak("Cancelled. No information was changed."); }}
-    />
+      />
+    </div>
   );
 }

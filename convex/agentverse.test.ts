@@ -65,7 +65,7 @@ describe("M7 Agentverse care-request boundary", () => {
     expect(accepted).toMatchObject({ ok: true, status: "ACK" });
     if (!accepted.ok) throw new Error("Refill request not accepted");
     const run = await data.root.run((ctx) => ctx.db.get("agentRuns", accepted.linkedRunId));
-    expect(run).toMatchObject({ refillCaseId, workflowType: "REFILL_INVESTIGATION", source: "AGENTVERSE" });
+    expect(run).toMatchObject({ refillCaseId, workflowType: "REFILL_INVESTIGATION", source: "AUTOMATION" });
     await data.root.run((ctx) => ctx.db.patch("agentRuns", accepted.linkedRunId, {
       status: "COMPLETED", provider: "DETERMINISTIC_FALLBACK", completedAt: Date.now(),
     }));
@@ -142,7 +142,7 @@ describe("M7 Agentverse care-request boundary", () => {
       requests: (await ctx.db.query("agentverseRequests").take(5)).length,
       runs: (await ctx.db.query("agentRuns").take(5)).length,
     }));
-    expect(counts).toEqual({ requests: 0, runs: 0 });
+    expect(counts).toEqual({ requests: 0, runs: 1 });
   });
 
   it("resolves only a pre-authorized alias and hands off to one persisted run", async () => {
@@ -165,7 +165,7 @@ describe("M7 Agentverse care-request boundary", () => {
     });
     expect(stored.run).toMatchObject({
       careCaseId: data.careCase.id,
-      source: "AGENTVERSE",
+      source: "AUTOMATION",
       status: "PENDING",
     });
     expect(stored.request.agentRunId).toBe(stored.run._id);

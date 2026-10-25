@@ -9,5 +9,7 @@ export default defineApp({
     WALGREENS_REFILL_AFF_ID: v.optional(v.string()),
     WALGREENS_MODE: v.optional(v.string()),
     WALGREENS_CALLBACK_URL: v.optional(v.string()),
+    PILLSENSE_DEMO_ENVIRONMENT: v.optional(v.string()),
+    PILLSENSE_DEMO_OPERATOR_TOKEN_IDENTIFIER: v.optional(v.string()),
   },
 });

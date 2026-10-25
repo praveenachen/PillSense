@@ -27,6 +27,7 @@ function AuthenticatedReminders({ showDeveloperControls }: { showDeveloperContro
   const runScenario = useMutation(api.reminders.runDemoScenario);
   const resetScenarios = useMutation(api.reminders.resetDemoScenarios);
   const configureWindows = useMutation(api.reminders.configureDemoWindows);
+  const advanceMissedDose = useMutation(api.demoCli.advanceMissedDose);
   const upcomingMinutesRef = useRef<HTMLInputElement>(null);
   const followUpMinutesRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
@@ -159,6 +160,17 @@ function AuthenticatedReminders({ showDeveloperControls }: { showDeveloperContro
             className="mt-4 min-h-11 text-sm font-semibold text-violet-800 underline disabled:opacity-50"
           >
             Reset synthetic reminder scenarios
+          </button>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => perform(
+              () => advanceMissedDose({}),
+              "Synthetic time advanced by six minutes through normal reminder reconciliation; automatic investigation queued.",
+            )}
+            className="ml-3 mt-4 min-h-11 rounded-full border border-violet-300 bg-white px-4 text-sm font-semibold text-violet-800 disabled:opacity-50"
+          >
+            Advance prepared missed dose +6 min
           </button>
         </div></details>
       )}

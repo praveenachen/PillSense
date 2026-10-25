@@ -7,9 +7,9 @@ import { api } from "../../convex/_generated/api";
 import { AuthRequired } from "./auth-required";
 import { reasonLabels, type CareCaseItem } from "./caregiver-alerts";
 import { CaseInvestigationDetail } from "./case-investigation-detail";
-import { DeviceStatusCard, NeedsAttentionCard, RefillStatusCard } from "./care-cards";
+import { DeviceStatusCard, NeedsAttentionCard } from "./care-cards";
 import { Icon } from "./mobile-ui";
-import { WalgreensRefillControls } from "./walgreens-refill-controls";
+import { DarkRefillWorkflow } from "./dark-refill-workflow";
 import { caregiverActivityLabel, caregiverActivityState, caregiverNextAction, dedupeCaregiverActivity, getCareProgress, pickPriorityCase, type CaregiverActivityState } from "@/lib/care-dashboard";
 
 type CareTab = "overview" | "activity";
@@ -62,6 +62,7 @@ function AuthorizedCare({ account, patientName, medications }: { account?: React
   const activity = useQuery(api.activity.latestForCaregiver);
   const occurrences = useQuery(api.occurrences.listForPatient, { now });
   const refills = useQuery(api.refills.listForCaregiver);
+  const journey = useQuery(api.activity.careJourney, { now });
 
   useEffect(() => {
     if (showcaseRequested.current) return;
@@ -70,7 +71,7 @@ function AuthorizedCare({ account, patientName, medications }: { account?: React
     void ensureShowcase({ timezone }).catch(() => undefined);
   }, [ensureShowcase]);
 
-  if (cases === undefined || issues === undefined || activity === undefined || occurrences === undefined || refills === undefined) {
+  if (cases === undefined || issues === undefined || activity === undefined || occurrences === undefined || refills === undefined || journey === undefined) {
     return <CareShell account={account}><CareState title="Loading care overview…">Listening for authorized case, schedule, and supply updates.</CareState></CareShell>;
   }
   if (cases.status !== "ready" || issues.status !== "ready" || activity.status !== "ready" || refills.status !== "ready") {
@@ -82,7 +83,6 @@ function AuthorizedCare({ account, patientName, medications }: { account?: React
   const focus = pickPriorityCase(caseList);
   const unresolved = caseList.filter((item) => item.status !== "RESOLVED");
   const progress = getCareProgress(occurrences.occurrences, now);
-  const refill = [...refills.cases].sort((a, b) => (a.forecast.estimatedDaysRemaining ?? 9999) - (b.forecast.estimatedDaysRemaining ?? 9999))[0] ?? null;
   type FeedItem = { key: string; at: number; title: string; medicationName: string; nextAction: string; state: CaregiverActivityState; caseId?: string };
   const rawFeed: FeedItem[] = [
     ...caseList.map((item): FeedItem => ({
@@ -118,13 +118,7 @@ function AuthorizedCare({ account, patientName, medications }: { account?: React
 
         {focus ? <NeedsAttentionCard item={focus} count={unresolved.length} onOpen={() => openCase(focus.id)} /> : <section className="pd-card p-4"><h2 className="text-lg font-semibold">Needs attention</h2><p className="mt-3 flex items-center gap-2 text-sm font-semibold text-pd-ok"><Icon name="check" size={18} /> Nothing needs attention</p><p className="mt-2 text-xs leading-5 text-pd-muted">Care cases appear only when recorded evidence needs caregiver follow-up.</p></section>}
 
-        <RefillStatusCard medicationName={refill?.medicationName ?? null} daysLeft={refill?.forecast.estimatedDaysRemaining ?? null} />
-        {refill?.refillCase && ["OPEN", "REVIEWED", "REFILL_REQUESTED"].includes(refill.refillCase.status) && (
-          <WalgreensRefillControls
-            caseId={refill.refillCase._id}
-            eligible={refill.refillCase.status === "REFILL_REQUESTED" && refill.refillCase.investigationStatus === "COMPLETED" && refill.refillCase.triggerReason === "LOW_SUPPLY" && refill.refillCase.estimatedSupplyCount !== null}
-          />
-        )}
+        <DarkRefillWorkflow />
 
         <DeviceStatusCard device={occurrences.device} medicationCount={medications.length} />
 
@@ -133,6 +127,10 @@ function AuthorizedCare({ account, patientName, medications }: { account?: React
       {tab === "activity" && (selected ? <CaseInvestigationDetail item={selected} onBack={() => setSelectedId(null)} /> : <div className="space-y-3">
         {feed.length === 0 ? <section className="pd-card p-4 text-sm text-pd-muted">No care activity yet.</section> : <ul className="pd-card divide-y divide-white/8 overflow-hidden">{feed.map((entry) => <li key={entry.key}>{entry.caseId ? <button type="button" onClick={() => setSelectedId(entry.caseId!)} className="pd-focus flex min-h-[5.5rem] w-full items-center gap-3 px-4 py-3 text-left"><ActivityDot state={entry.state} /><ActivityText entry={entry} /><Icon name="chevron" size={15} className="text-pd-muted" /></button> : <Link href="/caregiver" className="pd-focus flex min-h-[5.5rem] items-center gap-3 px-4 py-3"><ActivityDot state={entry.state} /><ActivityText entry={entry} /><Icon name="chevron" size={15} className="text-pd-muted" /></Link>}</li>)}</ul>}
         {medications.length === 0 && <p className="text-center text-xs text-pd-muted">No active medication assignments.</p>}
+        <section className="pd-card p-4">
+          <div className="flex items-center justify-between gap-3"><h2 className="text-base font-semibold">Medication care timeline</h2><span className="rounded-full bg-pd-accent/10 px-2 py-1 text-[0.6rem] font-bold text-pd-accent-soft">PERSISTED EVIDENCE</span></div>
+          {journey.events.length === 0 ? <p className="mt-3 text-xs text-pd-muted">No persisted care events yet.</p> : <ul className="mt-3 divide-y divide-pd-line">{journey.events.slice(0, 14).map((event) => <li key={event.id} className="py-3"><div className="flex items-start gap-2"><span className={`mt-1.5 size-2 shrink-0 rounded-full ${event.source === "REAL" ? "bg-pd-ok" : "bg-pd-accent"}`} /><div className="min-w-0"><p className="text-sm font-semibold">{event.title}</p><p className="mt-0.5 text-xs text-pd-muted">{event.detail}</p><p className="mt-1 text-[0.62rem] text-pd-muted/75">{event.source} · {formatDate(event.at)} · {event.evidence}</p></div></div></li>)}</ul>}
+        </section>
       </div>)}
     </CareShell>
   );

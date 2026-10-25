@@ -57,6 +57,8 @@ npm run dev
 
 Use the existing ignored `.env.local` and existing Convex deployment. Clerk/Convex setup is documented in [docs/SETUP.md](docs/SETUP.md).
 
+The repeatable H6C synthetic scenarios, development-only seed/reset CLI, exact Windows process commands, and judge walkthrough are documented in [docs/DEMO_RUNBOOK.md](docs/DEMO_RUNBOOK.md).
+
 ### Medication care coordinator
 
 ```powershell
@@ -84,6 +86,7 @@ Do not overwrite an existing environment file. Seed phrases, service secrets, An
 ```powershell
 agent\.venv\Scripts\python.exe -m pytest agent\tests -q
 fetch_agents\.venv\Scripts\python.exe -m pytest fetch_agents\tests -q
+vision\.venv\Scripts\python.exe -m pytest vision\tests -q
 npm run typecheck
 npm run lint
 npm test

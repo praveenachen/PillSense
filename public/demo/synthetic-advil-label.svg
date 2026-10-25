@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="760" viewBox="0 0 1200 760" role="img" aria-labelledby="title description">
+  <title id="title">Synthetic Advil demo package label</title>
+  <description id="description">A clearly marked synthetic package fixture for the PillSense OCR demo. It is not a prescription or medication instruction.</description>
+  <rect width="1200" height="760" rx="54" fill="#f4f8ff"/>
+  <rect x="32" y="32" width="1136" height="696" rx="38" fill="#fff" stroke="#15213a" stroke-width="8"/>
+  <rect x="32" y="32" width="1136" height="132" rx="38" fill="#222b62"/>
+  <text x="600" y="112" text-anchor="middle" font-family="Arial, sans-serif" font-size="54" font-weight="700" fill="#fff">SYNTHETIC DEMO LABEL · NOT FOR USE</text>
+  <text x="92" y="286" font-family="Arial, sans-serif" font-size="112" font-weight="800" fill="#1e3a8a">Advil</text>
+  <text x="92" y="366" font-family="Arial, sans-serif" font-size="48" font-weight="700" fill="#172033">Ibuprofen tablets, 200 mg</text>
+  <text x="92" y="434" font-family="Arial, sans-serif" font-size="40" fill="#334155">Pain reliever · tablet · 24 tablets</text>
+  <rect x="88" y="500" width="1024" height="146" rx="20" fill="#fff7cc" stroke="#c48b00" stroke-width="4"/>
+  <text x="600" y="558" text-anchor="middle" font-family="Arial, sans-serif" font-size="34" font-weight="800" fill="#7a4d00">NO DOSING SCHEDULE IS PROVIDED BY THIS FIXTURE</text>
+  <text x="600" y="610" text-anchor="middle" font-family="Arial, sans-serif" font-size="28" fill="#7a4d00">Caregiver must review the scan and explicitly enter all instructions.</text>
+</svg>

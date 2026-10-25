@@ -7,7 +7,7 @@ export async function createOrReuseAdherenceRun(
   requestedBy: Id<"appUsers">,
   now: number,
   options: {
-    source: "CAREGIVER_UI" | "AGENTVERSE";
+    source: "CAREGIVER_UI" | "AGENTVERSE" | "AUTOMATION";
     agentverseRequestId?: Id<"agentverseRequests">;
   },
 ) {
@@ -73,7 +73,7 @@ export async function createOrReuseRefillRun(
   refillCase: Doc<"refillCases">,
   requestedBy: Id<"appUsers">,
   now: number,
-  options: { source: "CAREGIVER_UI" | "AGENTVERSE"; agentverseRequestId?: Id<"agentverseRequests"> },
+  options: { source: "CAREGIVER_UI" | "AGENTVERSE" | "AUTOMATION"; agentverseRequestId?: Id<"agentverseRequests"> },
 ) {
   const runs = await ctx.db.query("agentRuns")
     .withIndex("by_refill_case", (q) => q.eq("refillCaseId", refillCase._id))

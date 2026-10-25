@@ -54,9 +54,11 @@ describe("synthetic dashboard showcase seed", () => {
     await actor.mutation(api.reminders.runDemoScenario, { scenario: "OVERDUE_ESCALATION" });
 
     const result = await actor.mutation(api.demo.ensureDashboardShowcase, { timezone: "America/Toronto" });
-    expect(result.legacyCareCasesRemoved).toBe(1);
+    // H6C automatically queues an investigation for the case, so cleanup must retain
+    // both the case and its source occurrence as immutable audit evidence.
+    expect(result.legacyCareCasesRemoved).toBe(0);
     const legacy = await root.run(async (ctx) => (await ctx.db.query("doseOccurrences").take(30)).filter((row) => row.occurrenceKey.startsWith("reminder-demo:")));
-    expect(legacy).toHaveLength(0);
+    expect(legacy).toHaveLength(1);
   });
 
   it("retires the old Iron Supplement demo medication and duplicate medications with the same name", async () => {

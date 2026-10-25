@@ -4,6 +4,7 @@ import type { MutationCtx, QueryCtx } from "./_generated/server";
 import { mutation, query } from "./_generated/server";
 import { requireCaregiverAccess, resolveDashboardPatient } from "./lib/authorization";
 import { buildSupplyForecast } from "./lib/refillForecast";
+import { createOrReuseRefillRun } from "./lib/agentRunCreation";
 
 const DEFAULT_THRESHOLD_DAYS = 3;
 const ACTIVE_STATUSES = new Set(["OPEN", "REVIEWED", "REFILL_REQUESTED"]);
@@ -48,6 +49,15 @@ export async function reconcilePatientRefills(ctx: MutationCtx, patientId: Id<"a
     .withIndex("by_patient", (q) => q.eq("patientId", patientId)).take(20)).filter((row) => row.active);
   let created = 0;
   let updated = 0;
+  async function queueAutomaticInvestigation(refillCase: Doc<"refillCases">) {
+    const patient = await ctx.db.get("appUsers", patientId);
+    if (!patient?.isSynthetic) return;
+    const relationships = await ctx.db.query("careRelationships")
+      .withIndex("by_patient", (q) => q.eq("patientId", patientId)).take(10);
+    const relationship = relationships.find((candidate) => candidate.status === "active");
+    if (!relationship) return;
+    await createOrReuseRefillRun(ctx, refillCase, relationship.caregiverId, now, { source: "AUTOMATION" });
+  }
   for (const assignment of assignments) {
     const forecast = await forecastAssignment(ctx, assignment, now, threshold);
     const active = await latestActiveCase(ctx, assignment.medicationId);
@@ -93,10 +103,14 @@ export async function reconcilePatientRefills(ctx: MutationCtx, patientId: Id<"a
         updatedAt: now,
       });
       await ctx.db.insert("refillCaseTransitions", { caseId, patientId, type: "OPENED", fromStatus: null, toStatus: "OPEN", occurredAt: now });
+      const createdCase = await ctx.db.get("refillCases", caseId);
+      if (createdCase) await queueAutomaticInvestigation(createdCase);
       created += 1;
     } else if (active.evidenceFingerprint !== fingerprint) {
       await ctx.db.patch("refillCases", active._id, { ...evidence, caseVersion: active.caseVersion + 1, updatedAt: now });
       await ctx.db.insert("refillCaseTransitions", { caseId: active._id, patientId, type: "FORECAST_UPDATED", fromStatus: active.status, toStatus: active.status, occurredAt: now });
+      const updatedCase = await ctx.db.get("refillCases", active._id);
+      if (updatedCase) await queueAutomaticInvestigation(updatedCase);
       updated += 1;
     }
   }

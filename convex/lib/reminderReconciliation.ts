@@ -1,5 +1,6 @@
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
+import { createOrReuseAdherenceRun } from "./agentRunCreation";
 
 const MINUTE = 60 * 1000;
 const DAY = 24 * 60 * MINUTE;
@@ -151,6 +152,20 @@ async function ensureCareCase(
     .withIndex("by_occurrence", (q) => q.eq("occurrenceId", occurrence._id))
     .unique();
 
+  async function queueAutomaticInvestigation(careCase: Doc<"careCases">) {
+    const patient = await ctx.db.get("appUsers", occurrence.patientId);
+    if (!patient?.isSynthetic) return;
+    const relationships = await ctx.db
+      .query("careRelationships")
+      .withIndex("by_patient", (q) => q.eq("patientId", occurrence.patientId))
+      .take(10);
+    const relationship = relationships.find((candidate) => candidate.status === "active");
+    if (!relationship) return;
+    await createOrReuseAdherenceRun(ctx, careCase, relationship.caregiverId, now, {
+      source: "AUTOMATION",
+    });
+  }
+
   if (!existing) {
     const caseId = await ctx.db.insert("careCases", {
       caseId: `case:${occurrence._id}`,
@@ -177,6 +192,8 @@ async function ensureCareCase(
       toStatus: "OPEN",
       occurredAt: now,
     });
+    const created = await ctx.db.get("careCases", caseId);
+    if (created) await queueAutomaticInvestigation(created);
     return;
   }
   if (existing.evidenceFingerprint === fingerprint) return;
@@ -203,6 +220,8 @@ async function ensureCareCase(
     toStatus: "OPEN",
     occurredAt: now,
   });
+  const updated = await ctx.db.get("careCases", existing._id);
+  if (updated) await queueAutomaticInvestigation(updated);
 }
 
 export async function reconcileOccurrence(

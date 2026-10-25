@@ -590,3 +590,79 @@ export const failRun = internalMutation({
     return { ok: true as const, duplicate: false };
   },
 });
+
+/**
+ * Keeps synthetic care alerts actionable when the optional Python worker is offline.
+ * A live worker has a grace period to claim the run first; claimed/RUNNING work is
+ * never replaced. This fallback does not infer ingestion or recommend medication use.
+ */
+export const completePendingFallbacks = internalMutation({
+  args: { now: v.optional(v.number()) },
+  handler: async (ctx, args) => {
+    const now = args.now ?? Date.now();
+    const staleBefore = now - 90_000;
+    const pending = await ctx.db.query("agentRuns")
+      .withIndex("by_status_and_createdAt", (q) => q.eq("status", "PENDING").lte("createdAt", staleBefore))
+      .order("asc").take(20);
+    let completed = 0;
+    for (const run of pending) {
+      const patient = await ctx.db.get("appUsers", run.patientId);
+      if (!patient?.isSynthetic || run.source !== "AUTOMATION") continue;
+      const { careCase, refillCase } = await scopedCase(ctx, run);
+      if (!isCaseCurrent(run, careCase, refillCase)) continue;
+      const findings = refillCase ? {
+        items: [{
+          category: "POSSIBLE_SUPPLY_ISSUE" as const,
+          evidenceReferences: [`refillCase:${refillCase._id}`],
+          uncertainty: "MEDIUM" as const,
+          explanation: "The schedule-based supply estimate crossed the configured low-supply threshold. The physical count has not been sensor verified.",
+        }],
+        overallSummary: "NON_LLM_FALLBACK: PillSense detected a low synthetic supply estimate. A caregiver should verify the physical supply before requesting a refill.",
+        proposedFollowUp: {
+          actionType: "CHECK_PHYSICAL_SUPPLY" as const,
+          explanation: "Verify the remaining supply, then use the existing caregiver review and refill workflow if appropriate.",
+        },
+      } : careCase ? {
+        items: [{
+          category: "NO_RECORDED_RESPONSE" as const,
+          evidenceReferences: [`occurrence:${careCase.occurrenceId}`],
+          uncertainty: "HIGH" as const,
+          explanation: "No patient response was recorded during the reminder window. Device and camera evidence do not establish ingestion.",
+        }],
+        overallSummary: "NON_LLM_FALLBACK: The scheduled dose received no patient response. PillSense cannot determine whether medication was taken.",
+        proposedFollowUp: {
+          actionType: "CONTACT_PATIENT" as const,
+          explanation: "Use the care team's established process to contact the patient and document the outcome.",
+        },
+      } : null;
+      if (!findings) continue;
+      await ctx.db.patch("agentRuns", run._id, {
+        status: "COMPLETED",
+        provider: "DETERMINISTIC_FALLBACK",
+        model: "NON_LLM_FALLBACK",
+        findings,
+        failureCode: null,
+        submissionIdempotencyKey: `fallback:${run.runId}`,
+        updatedAt: now,
+        completedAt: now,
+      });
+      if (careCase) await ctx.db.patch("careCases", careCase._id, { investigationStatus: "COMPLETED", updatedAt: now });
+      if (refillCase) await ctx.db.patch("refillCases", refillCase._id, { investigationStatus: "COMPLETED", updatedAt: now });
+      await ctx.db.insert("agentActions", {
+        actionId: `fallback:${run.runId}`,
+        runId: run._id,
+        patientId: run.patientId,
+        kind: "WORKFLOW",
+        toolName: "submit_investigation",
+        status: "SUCCESS",
+        startedAt: now,
+        completedAt: now,
+        evidenceReferences: findings.items.flatMap((item) => item.evidenceReferences),
+        summary: "NON_LLM_FALLBACK completed after the coordinator remained unavailable",
+        errorCode: null,
+      });
+      completed += 1;
+    }
+    return { checked: pending.length, completed };
+  },
+});

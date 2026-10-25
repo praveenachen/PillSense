@@ -17,6 +17,7 @@ export type VisionViewState = {
   lastTimestamp?: number;
   lastGestureAt?: number;
   error?: string;
+  initializationPhase?: string;
 };
 
 export type PersistedVisionEvent = {
@@ -27,11 +28,12 @@ export type PersistedVisionEvent = {
   diagnostic?: string;
 };
 
-export function VisionObservationView({ state, previewUrl, cameraIndex = 0, persistedEvents = [], onCameraIndex = () => undefined, onStart, onStop }: {
+export function VisionObservationView({ state, previewUrl, cameraIndex = 0, persistedEvents = [], startBlocked = false, onCameraIndex = () => undefined, onStart, onStop }: {
   state: VisionViewState;
   previewUrl?: string | null;
   cameraIndex?: number;
   persistedEvents?: PersistedVisionEvent[];
+  startBlocked?: boolean;
   onCameraIndex?: (index: number) => void;
   onStart: () => void;
   onStop: () => void;
@@ -40,7 +42,7 @@ export function VisionObservationView({ state, previewUrl, cameraIndex = 0, pers
   const running = state.status === "ACTIVE";
   const activity = state.status === "IDLE" ? "Camera inactive" : state.status === "ACTIVE"
     ? state.personVisible === true ? "Observing · person visible" : state.personVisible === false ? "Observing · person not visible" : "Observing"
-    : state.status === "STARTING" ? "Requesting camera" : state.status === "STOPPING" ? "Stopping camera" : state.status;
+    : state.status === "STARTING" ? `Requesting camera${state.initializationPhase ? ` · ${state.initializationPhase}` : ""}` : state.status === "STOPPING" ? "Stopping camera" : state.status;
 
   return <section aria-labelledby="vision-heading" className="space-y-4">
     <div className="flex flex-wrap items-start justify-between gap-3">
@@ -63,7 +65,7 @@ export function VisionObservationView({ state, previewUrl, cameraIndex = 0, pers
     </div>
 
     {state.error && <p role="alert" className="rounded-2xl border border-rose-400/20 bg-rose-400/10 p-3 text-sm text-rose-200">{state.error}</p>}
-    <div className="grid grid-cols-2 gap-3"><button type="button" onClick={onStart} disabled={active || state.bridge !== "CONNECTED"} className="pd-focus min-h-12 rounded-2xl bg-pd-accent px-4 text-sm font-bold text-white shadow-[0_0_24px_rgba(124,92,255,.2)] disabled:cursor-not-allowed disabled:opacity-40">Start observation</button><button type="button" onClick={onStop} disabled={!active || state.status === "STARTING" || state.status === "STOPPING"} className="pd-focus min-h-12 rounded-2xl border border-pd-line bg-pd-surface px-4 text-sm font-bold text-pd-text disabled:cursor-not-allowed disabled:opacity-40">Stop and release camera</button></div>
+    <div className="grid grid-cols-2 gap-3"><button type="button" onClick={onStart} disabled={active || startBlocked || state.bridge !== "CONNECTED"} className="pd-focus min-h-12 rounded-2xl bg-pd-accent px-4 text-sm font-bold text-white shadow-[0_0_24px_rgba(124,92,255,.2)] disabled:cursor-not-allowed disabled:opacity-40">Start observation</button><button type="button" onClick={onStop} disabled={!active || state.status === "STOPPING"} className="pd-focus min-h-12 rounded-2xl border border-pd-line bg-pd-surface px-4 text-sm font-bold text-pd-text disabled:cursor-not-allowed disabled:opacity-40">{state.status === "STARTING" ? "Cancel initialization" : "Stop and release camera"}</button></div>
 
     <div className="rounded-[1.35rem] border border-pd-line bg-pd-surface/65 p-4">
       <div className="flex items-center justify-between gap-3"><h3 className="text-sm font-semibold text-pd-text">Convex observation timeline</h3><span className="rounded-full bg-pd-accent/10 px-2.5 py-1 text-[0.65rem] font-bold uppercase tracking-wide text-pd-accent-soft">Real events</span></div>

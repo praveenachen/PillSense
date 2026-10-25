@@ -2,6 +2,15 @@ import { describe, expect, it, vi } from "vitest";
 import { createVisionSessionId, parseVisionSnapshot, VISION_SOURCE } from "./types";
 
 describe("vision event protocol", () => {
+  it("accepts a bounded initialization snapshot with its current phase", () => {
+    expect(parseVisionSnapshot({
+      sessionId: "vision_session_starting",
+      status: "STARTING",
+      initializationPhase: "opening camera",
+      events: [],
+    })).toMatchObject({ status: "STARTING", initializationPhase: "opening camera" });
+  });
+
   it("accepts an observation without clinical claims", () => {
     const value = parseVisionSnapshot({ sessionId: "vision_session_01", status: "ACTIVE", events: [{
       eventId: "vision_event_01", sessionId: "vision_session_01", timestamp: 1,

@@ -17,11 +17,19 @@ The application centralizes these values in `src/lib/dispenser/ble-protocol.ts`:
 
 The command characteristic supports writes, and the shared status characteristic supports reads and notifications. The browser transport enables notifications before issuing commands, because a later state such as `READY` can replace a transient command response in the characteristic's current value. It also retains direct reads as a fallback.
 
-The response remains browser-local and is not persisted to Convex as trusted motor evidence. In particular, `READY` or `CALIBRATION_REQUIRED` does not independently prove that the mechanism is physically at position 0.
+The response is never treated as trusted motor evidence. In particular, `READY` or `CALIBRATION_REQUIRED` does not independently prove that the mechanism is physically at position 0. The development-only voice demo may persist a sanitized browser observation with `trustedHardwareEvidence=false` for session continuity and auditability.
 
 ## H3 supervised Slot 6 movement
 
-The real-hardware panel exposes exactly one local, supervised test path. It is not connected to medication dispensing, Convex dose occurrences, inventory, device events, voice, Claude, or Fetch.ai.
+The manual real-hardware panel remains a local supervised test path. Separately, the development-only voice demo can bind one authorized synthetic Slot 6 reminder to the same browser BLE gateway after an operator arms it. Claude, Fetch.ai, schedules, camera observations, and free-form responses cannot directly create motor commands.
+
+### Development-only voice handoff
+
+The operator must pair the Arduino, read `READY`, complete the empty/inert-carousel, manual-home, and clear-mechanism confirmations, then explicitly arm the current browser connection. The short-lived arm is stored server-side for the authorized synthetic patient and consumed before the browser writes `MOVE,6,<id>`.
+
+The backend derives Slot 6 from the active reminder assignment; speech and the browser cannot provide an arbitrary target slot. It creates one compact operation ID, rejects prior attempts, and persists dispatch before the BLE write. A refresh, duplicate readiness response, disconnect, or `UNKNOWN` result cannot send another `MOVE`; only `GET_LAST_RESULT` reconciliation is permitted.
+
+Correlated `STARTED` and `DONE` responses update the persistent medication interaction session. They remain browser-observed, unauthenticated hardware evidence. `DONE` does not verify Slot 0 alignment, pill release, collection, or ingestion. The voice demo does not decrement inventory, and patient-reported ingestion remains separate.
 
 | Direction | UTF-8 message | Meaning |
 | --- | --- | --- |

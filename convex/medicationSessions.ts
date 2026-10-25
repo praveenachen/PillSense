@@ -1,12 +1,13 @@
 import { ConvexError, v } from "convex/values";
 import type { Doc } from "./_generated/dataModel";
 import type { MutationCtx } from "./_generated/server";
-import { mutation, query } from "./_generated/server";
+import { env, mutation, query } from "./_generated/server";
 import { requirePatientAccess } from "./lib/authorization";
 import { educationForMedication } from "./lib/medicationEducation";
 
 const intentValidator = v.union(
   v.literal("YES"),
+  v.literal("READY"),
   v.literal("NO"),
   v.literal("REPEAT"),
   v.literal("REQUEST_MORE_INFORMATION"),
@@ -60,7 +61,13 @@ function patientFirstName(displayName: string) {
   return displayName.trim().split(/\s+/)[0] || "there";
 }
 
-function present(session: Doc<"medicationInteractionSessions">, medication: Doc<"medications">, patientName: string) {
+function present(
+  session: Doc<"medicationInteractionSessions">,
+  medication: Doc<"medications">,
+  patientName: string,
+  command: Doc<"dispenseCommands"> | null = null,
+  isSynthetic = false,
+) {
   const education = educationForMedication(medication);
   return {
     id: session._id,
@@ -70,8 +77,16 @@ function present(session: Doc<"medicationInteractionSessions">, medication: Doc<
     firstInteraction: session.firstInteraction,
     cameraConsent: session.cameraConsent,
     patientFirstName: patientFirstName(patientName),
+    isSynthetic,
     medicationName: medication.name,
     instructions: medication.instructions,
+    hardware: command ? {
+      operationId: command.operationId ?? null,
+      status: command.status,
+      motorCompletion: command.motorCompletion,
+      slot: command.slot,
+      browserObserved: command.source === "VOICE_BLE_DEMO",
+    } : null,
     education: education ? {
       available: true as const,
       sourceTitle: education.sourceTitle,
@@ -86,12 +101,13 @@ export const getForOccurrence = query({
     const occurrence = await ctx.db.get("doseOccurrences", args.occurrenceId);
     if (!occurrence) return null;
     await requirePatientAccess(ctx, occurrence.patientId);
-    const [session, medication, patient] = await Promise.all([
+    const [session, medication, patient, command] = await Promise.all([
       ctx.db.query("medicationInteractionSessions").withIndex("by_occurrence", (q) => q.eq("occurrenceId", args.occurrenceId)).unique(),
       ctx.db.get("medications", occurrence.medicationId),
       ctx.db.get("appUsers", occurrence.patientId),
+      ctx.db.query("dispenseCommands").withIndex("by_occurrence", (q) => q.eq("occurrenceId", args.occurrenceId)).unique(),
     ]);
-    return session && medication && patient ? present(session, medication, patient.displayName) : null;
+    return session && medication && patient ? present(session, medication, patient.displayName, command, patient.isSynthetic ?? false) : null;
   },
 });
 
@@ -101,7 +117,7 @@ export const claimGreeting = mutation({
     const now = Date.now();
     const { session, medication, patient } = await ensureSession(ctx, args.occurrenceId, now);
     if (session.greetingStatus !== "NOT_ISSUED") {
-      return { shouldPlay: false as const, session: present(session, medication, patient.displayName) };
+      return { shouldPlay: false as const, session: present(session, medication, patient.displayName, null, patient.isSynthetic ?? false) };
     }
     await ctx.db.patch("medicationInteractionSessions", session._id, { greetingStatus: "CLAIMED", updatedAt: now });
     await ctx.db.insert("medicationInteractionEvents", {
@@ -109,7 +125,7 @@ export const claimGreeting = mutation({
       type: "GREETING_CLAIMED", source: "SYSTEM", occurredAt: now,
     });
     const updated = { ...session, greetingStatus: "CLAIMED" as const, updatedAt: now };
-    return { shouldPlay: true as const, session: present(updated, medication, patient.displayName) };
+    return { shouldPlay: true as const, session: present(updated, medication, patient.displayName, null, patient.isSynthetic ?? false) };
   },
 });
 
@@ -137,39 +153,82 @@ export const respond = mutation({
   args: { occurrenceId: v.id("doseOccurrences"), intent: intentValidator, source: sourceValidator },
   handler: async (ctx, args) => {
     const now = Date.now();
-    const { session, medication } = await ensureSession(ctx, args.occurrenceId, now);
+    const { session, medication, occurrence, patient } = await ensureSession(ctx, args.occurrenceId, now);
     const education = educationForMedication(medication);
+    const ironDemoEducation = patient.isSynthetic && env.PILLSENSE_DEMO_ENVIRONMENT === "development" && education?.code === "MEDLINEPLUS_IRON";
+    const educationOffer = `Before we continue, would you like to hear about possible side effects of ${medication.name}?`;
     let next = session.state;
     let response: string;
     let eventType: Doc<"medicationInteractionEvents">["type"] = "PATIENT_INTENT";
+    // A failed client preflight can leave the session ready without ever
+    // authorizing a hardware command. A repeated voice readiness response may
+    // resume only that exact unattempted state. Once any command/attempt exists,
+    // duplicate speech remains ineligible and can never create another MOVE.
+    const resumableUnattemptedVoiceReadiness =
+      args.source === "VOICE" &&
+      (args.intent === "READY" || args.intent === "YES") &&
+      session.state === "READY_FOR_SUPERVISED_ROUTINE" &&
+      session.hardwareReadinessSource === "VOICE" &&
+      occurrence.attemptStatus === "NONE" &&
+      !occurrence.commandId;
 
-    if (args.intent === "REPEAT") {
+    if (args.intent === "READY") {
+      if (session.state === "AWAITING_READINESS" && ironDemoEducation) {
+        next = "AWAITING_EDUCATION_CHOICE";
+        response = educationOffer;
+      } else if (session.state === "AWAITING_EDUCATION_CHOICE" && ironDemoEducation && education) {
+        next = "AWAITING_CONTINUE";
+        eventType = "EDUCATION_PRESENTED";
+        response = `${education.spokenSummary} Are you ready to continue?`;
+      } else if (["AWAITING_READINESS", "AWAITING_EDUCATION_CHOICE", "AWAITING_CONTINUE"].includes(session.state)) {
+        next = "READY_FOR_SUPERVISED_ROUTINE";
+        eventType = "ROUTINE_READY";
+        response = "Okay. I am preparing the armed demo dispenser now.";
+      } else if (session.state === "READY_FOR_SUPERVISED_ROUTINE") {
+        response = resumableUnattemptedVoiceReadiness
+          ? "The routine is ready. I am resuming the armed demo dispenser preparation now."
+          : "The routine is already ready. I will not create another movement command.";
+      } else {
+        response = "This medication session already has a terminal or in-progress hardware state. No new movement command was created.";
+      }
+    } else if (args.intent === "REPEAT") {
       response = session.state === "AWAITING_CONTINUE" && education
         ? `${education.spokenSummary} Would you like to continue with your scheduled medication routine?`
-        : "Please answer yes or no to the current question.";
+        : session.state === "AWAITING_EDUCATION_CHOICE" ? educationOffer : "Please answer yes or no to the current question.";
     } else if (args.intent === "REQUEST_MORE_INFORMATION") {
+      const canContinue = ["AWAITING_READINESS", "AWAITING_EDUCATION_CHOICE", "AWAITING_CONTINUE"].includes(session.state);
       response = education
-        ? `${education.spokenSummary} Would you like to continue with your scheduled medication routine?`
+        ? `${education.spokenSummary}${canContinue ? " Would you like to continue with your scheduled medication routine?" : ""}`
         : `I do not have reviewed medication education for ${medication.name}. Your caregiver-approved instruction is: ${medication.instructions || "No additional instruction is recorded"}.`;
-      if (education) next = "AWAITING_CONTINUE";
+      if (education && canContinue) {
+        next = "AWAITING_CONTINUE";
+        eventType = "EDUCATION_PRESENTED";
+      }
     } else if (args.intent === "NO") {
-      next = "DECLINED";
-      eventType = "SESSION_DECLINED";
-      response = "Okay. The routine is paused. No hardware command was issued and your care team can still review the reminder.";
+      if (session.state === "AWAITING_EDUCATION_CHOICE") {
+        next = "AWAITING_CONTINUE";
+        response = "Okay, we can skip that information. Are you ready to continue?";
+      } else if (["AWAITING_READINESS", "AWAITING_CONTINUE"].includes(session.state)) {
+        next = "DECLINED";
+        eventType = "SESSION_DECLINED";
+        response = "Okay. We can pause here.";
+      } else {
+        response = "Okay. Your existing routine status is unchanged.";
+      }
     } else if (session.state === "AWAITING_READINESS") {
-      if (session.firstInteraction && education) {
+      if ((session.firstInteraction || ironDemoEducation) && education) {
         next = "AWAITING_EDUCATION_CHOICE";
-        response = `I noticed this is your first scheduled interaction with ${medication.name}. Would you like to hear general side-effect information from ${education.sourceTitle}?`;
+        response = educationOffer;
       } else {
         next = "READY_FOR_SUPERVISED_ROUTINE";
         eventType = "ROUTINE_READY";
-        response = "Okay. Let's get everything ready. An authorized operator must use Hardware Lab for any supervised motor test.";
+        response = "Okay. I am preparing the armed demo dispenser now.";
       }
     } else if (session.state === "AWAITING_EDUCATION_CHOICE") {
       if (!education) {
         next = "READY_FOR_SUPERVISED_ROUTINE";
         eventType = "ROUTINE_READY";
-        response = `I do not have reviewed medication education for ${medication.name}. Your recorded instruction is: ${medication.instructions || "No additional instruction is recorded"}. An operator must supervise any hardware test.`;
+        response = `I do not have reviewed medication education for ${medication.name}. Your recorded instruction is: ${medication.instructions || "No additional instruction is recorded"}. I will continue only if the supervised demo hardware was armed first.`;
       } else {
         next = "AWAITING_CONTINUE";
         eventType = "EDUCATION_PRESENTED";
@@ -178,19 +237,271 @@ export const respond = mutation({
     } else if (session.state === "AWAITING_CONTINUE") {
       next = "READY_FOR_SUPERVISED_ROUTINE";
       eventType = "ROUTINE_READY";
-      response = "Okay. Let's get everything ready. Voice cannot move the motor; an authorized operator must use the supervised Hardware Lab controls.";
+      response = "Okay. I am preparing the armed demo dispenser now.";
     } else if (session.state === "READY_FOR_SUPERVISED_ROUTINE") {
-      response = "The routine is ready for operator supervision. Voice cannot dispatch a motor command.";
+      response = resumableUnattemptedVoiceReadiness
+        ? "The routine is ready. I am resuming the armed demo dispenser preparation now."
+        : "The routine is already ready. I will not create another movement command.";
     } else {
       response = "This medication session is already closed. No hardware command was issued.";
     }
 
-    await ctx.db.patch("medicationInteractionSessions", session._id, { state: next, updatedAt: now });
+    const voiceHardwareReady =
+      (eventType === "ROUTINE_READY" && args.source === "VOICE") ||
+      resumableUnattemptedVoiceReadiness;
+    await ctx.db.patch("medicationInteractionSessions", session._id, {
+      state: next,
+      updatedAt: now,
+      ...(voiceHardwareReady ? { hardwareReadinessSource: "VOICE" as const } : {}),
+    });
     await ctx.db.insert("medicationInteractionEvents", {
       sessionId: session._id, occurrenceId: session.occurrenceId, patientId: session.patientId,
       type: eventType, intent: args.intent, detailCode: education?.code, source: args.source, occurredAt: now,
     });
-    return { state: next, response, educationSourceUrl: eventType === "EDUCATION_PRESENTED" ? education?.sourceUrl ?? null : null };
+    return {
+      state: next,
+      response,
+      hardwareDispatchEligible: voiceHardwareReady,
+      educationSourceUrl: eventType === "EDUCATION_PRESENTED" ? education?.sourceUrl ?? null : null,
+    };
+  },
+});
+
+function voiceOperationId(sessionId: string) {
+  const compact = sessionId.replace(/[^A-Za-z0-9]/g, "").slice(-10).toUpperCase();
+  if (!compact) throw new ConvexError("Unable to create a hardware operation ID");
+  return `VH${compact}`.slice(0, 12);
+}
+
+export const prepareHardwareDispatch = mutation({
+  args: {
+    occurrenceId: v.id("doseOccurrences"),
+    connectionId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const now = Date.now();
+    if (env.PILLSENSE_DEMO_ENVIRONMENT !== "development") {
+      throw new ConvexError("Voice hardware demo mode is disabled outside development");
+    }
+    const { session, occurrence, medication, patient } = await ensureSession(ctx, args.occurrenceId, now);
+    if (!patient.isSynthetic) throw new ConvexError("Voice hardware demo is limited to the synthetic patient");
+    if (session.hardwareReadinessSource !== "VOICE") {
+      throw new ConvexError("A structured voice readiness response is required");
+    }
+
+    const existing = await ctx.db
+      .query("dispenseCommands")
+      .withIndex("by_occurrence", (q) => q.eq("occurrenceId", occurrence._id))
+      .unique();
+    if (existing) {
+      return {
+        commandId: existing.commandId,
+        operationId: existing.operationId ?? existing.commandId,
+        slot: existing.slot,
+        shouldDispatch: false as const,
+        status: existing.status,
+      };
+    }
+    if (session.state !== "READY_FOR_SUPERVISED_ROUTINE") {
+      throw new ConvexError("The medication session is not ready for hardware preparation");
+    }
+    if (occurrence.attemptStatus !== "NONE" || occurrence.commandId) {
+      throw new ConvexError("This occurrence has already been attempted");
+    }
+    if (now < occurrence.eligibleFrom || now > occurrence.expiresAt) {
+      throw new ConvexError("This reminder is not currently eligible for the demo movement");
+    }
+
+    const [schedule, arm] = await Promise.all([
+      ctx.db.get("medicationSchedules", occurrence.scheduleId),
+      ctx.db
+        .query("hardwareDemoArms")
+        .withIndex("by_patient_and_status", (q) =>
+          q.eq("patientId", occurrence.patientId).eq("status", "ARMED"),
+        )
+        .order("desc")
+        .first(),
+    ]);
+    if (!schedule?.active || schedule.medicationId !== medication._id || (schedule.revision ?? 1) !== occurrence.scheduleRevision) {
+      throw new ConvexError("This reminder no longer matches the active medication schedule");
+    }
+    if (!arm || arm.expiresAt <= now) throw new ConvexError("The supervised voice hardware demo is not armed");
+    if (arm.connectionId !== args.connectionId) {
+      throw new ConvexError("The armed Bluetooth connection is no longer active");
+    }
+
+    const assignments = await ctx.db
+      .query("compartmentAssignments")
+      .withIndex("by_medication", (q) => q.eq("medicationId", occurrence.medicationId))
+      .take(10);
+    const assignment = assignments.find((candidate) =>
+      candidate.active &&
+      candidate.patientId === occurrence.patientId &&
+      candidate.deviceId === arm.deviceId,
+    );
+    if (!assignment) throw new ConvexError("No active assignment exists on the armed device");
+    if (assignment.slot !== arm.expectedSlot || assignment.slot !== 6) {
+      throw new ConvexError("The verified firmware supports only the armed Slot 6 demo");
+    }
+    // This supervised positioning demo uses operator-confirmed empty/inert
+    // hardware. Synthetic inventory is UI/mock data, not physical load evidence
+    // or a prerequisite for movement; this path never decrements it.
+
+    const operationId = voiceOperationId(String(session._id));
+    const duplicate = await ctx.db
+      .query("dispenseCommands")
+      .withIndex("by_commandId", (q) => q.eq("commandId", operationId))
+      .unique();
+    if (duplicate) throw new ConvexError("Duplicate voice hardware operation ID");
+
+    await ctx.db.insert("dispenseCommands", {
+      commandId: operationId,
+      operationId,
+      occurrenceId: occurrence._id,
+      patientId: occurrence.patientId,
+      medicationId: occurrence.medicationId,
+      scheduleId: occurrence.scheduleId,
+      deviceId: arm.deviceId,
+      assignmentId: assignment._id,
+      demoArmId: arm._id,
+      source: "VOICE_BLE_DEMO",
+      slot: 6,
+      status: "AUTHORIZED",
+      motorCompletion: "NOT_STARTED",
+      pillRelease: "UNKNOWN",
+      pillCollection: "UNKNOWN",
+      expiresAt: occurrence.expiresAt,
+      createdAt: now,
+      updatedAt: now,
+    });
+    await ctx.db.patch("doseOccurrences", occurrence._id, {
+      attemptStatus: "AUTHORIZED",
+      commandId: operationId,
+    });
+    await ctx.db.patch("medicationInteractionSessions", session._id, {
+      state: "PREPARING_DISPENSER",
+      hardwareCommandId: operationId,
+      updatedAt: now,
+    });
+    await ctx.db.insert("medicationInteractionEvents", {
+      sessionId: session._id,
+      occurrenceId: occurrence._id,
+      patientId: occurrence.patientId,
+      type: "HARDWARE_PREPARED",
+      source: "SYSTEM",
+      occurredAt: now,
+    });
+    return { commandId: operationId, operationId, slot: 6, shouldDispatch: true as const, status: "AUTHORIZED" as const };
+  },
+});
+
+export const markHardwareDispatched = mutation({
+  args: { commandId: v.string(), connectionId: v.string() },
+  handler: async (ctx, args) => {
+    const command = await ctx.db.query("dispenseCommands")
+      .withIndex("by_commandId", (q) => q.eq("commandId", args.commandId)).unique();
+    if (!command || command.source !== "VOICE_BLE_DEMO" || !command.demoArmId) {
+      throw new ConvexError("Voice hardware command is unavailable");
+    }
+    await requirePatientAccess(ctx, command.patientId);
+    if (command.status !== "AUTHORIZED") return { shouldSend: false as const, status: command.status };
+    const arm = await ctx.db.get("hardwareDemoArms", command.demoArmId);
+    const now = Date.now();
+    if (!arm || arm.status !== "ARMED" || arm.expiresAt <= now || arm.connectionId !== args.connectionId) {
+      throw new ConvexError("The supervised voice hardware arm is no longer valid");
+    }
+    await ctx.db.patch("hardwareDemoArms", arm._id, { status: "CONSUMED", consumedAt: now, updatedAt: now });
+    await ctx.db.patch("dispenseCommands", command._id, { status: "DISPATCHED", updatedAt: now });
+    await ctx.db.patch("doseOccurrences", command.occurrenceId, { attemptStatus: "DISPATCHED" });
+    const session = await ctx.db.query("medicationInteractionSessions")
+      .withIndex("by_occurrence", (q) => q.eq("occurrenceId", command.occurrenceId)).unique();
+    if (session) {
+      await ctx.db.patch("medicationInteractionSessions", session._id, { state: "MOVEMENT_IN_PROGRESS", updatedAt: now });
+      await ctx.db.insert("medicationInteractionEvents", {
+        sessionId: session._id, occurrenceId: command.occurrenceId, patientId: command.patientId,
+        type: "HARDWARE_DISPATCHED", source: "SYSTEM", occurredAt: now,
+      });
+    }
+    return { shouldSend: true as const, status: "DISPATCHED" as const };
+  },
+});
+
+const browserHardwareEvent = v.union(
+  v.literal("MOTOR_STARTED"),
+  v.literal("MOTOR_COMPLETED"),
+  v.literal("UNKNOWN"),
+  v.literal("FAULT"),
+  v.literal("DISCONNECTED"),
+);
+
+export const recordHardwareEvent = mutation({
+  args: { commandId: v.string(), operationId: v.string(), type: browserHardwareEvent, occurredAt: v.number() },
+  handler: async (ctx, args) => {
+    const command = await ctx.db.query("dispenseCommands")
+      .withIndex("by_commandId", (q) => q.eq("commandId", args.commandId)).unique();
+    if (!command || command.source !== "VOICE_BLE_DEMO" || command.operationId !== args.operationId) {
+      throw new ConvexError("The browser BLE result does not match this voice demo command");
+    }
+    await requirePatientAccess(ctx, command.patientId);
+    const eventId = `voice-ble:${args.operationId}:${args.type}`;
+    const duplicate = await ctx.db.query("deviceEvents")
+      .withIndex("by_eventId", (q) => q.eq("eventId", eventId)).unique();
+    if (duplicate) return { duplicate: true, commandStatus: command.status };
+
+    const now = Date.now();
+    await ctx.db.insert("deviceEvents", {
+      eventId,
+      commandId: command.commandId,
+      patientId: command.patientId,
+      deviceId: command.deviceId,
+      type: args.type,
+      source: "BROWSER_BLE_DEMO",
+      trustedHardwareEvidence: false,
+      occurredAt: args.occurredAt,
+      receivedAt: now,
+    });
+    const session = await ctx.db.query("medicationInteractionSessions")
+      .withIndex("by_occurrence", (q) => q.eq("occurrenceId", command.occurrenceId)).unique();
+
+    if (args.type === "MOTOR_COMPLETED" && command.status === "DISPATCHED") {
+      await ctx.db.patch("dispenseCommands", command._id, { status: "COMPLETED", motorCompletion: "COMPLETED", updatedAt: now });
+      await ctx.db.patch("doseOccurrences", command.occurrenceId, { attemptStatus: "COMPLETED" });
+      if (session) {
+        await ctx.db.patch("medicationInteractionSessions", session._id, {
+          state: session.cameraConsent ? "CAMERA_OBSERVATION_PENDING" : "AWAITING_PATIENT_REPORT",
+          updatedAt: now,
+        });
+        await ctx.db.insert("medicationInteractionEvents", {
+          sessionId: session._id, occurrenceId: command.occurrenceId, patientId: command.patientId,
+          type: "HARDWARE_COMPLETED", source: "SYSTEM", occurredAt: now,
+        });
+      }
+      return { duplicate: false, commandStatus: "COMPLETED" as const };
+    }
+
+    if (args.type === "MOTOR_STARTED" && command.status === "DISPATCHED") {
+      if (session) {
+        await ctx.db.patch("medicationInteractionSessions", session._id, { state: "MOVEMENT_IN_PROGRESS", updatedAt: now });
+        await ctx.db.insert("medicationInteractionEvents", {
+          sessionId: session._id, occurrenceId: command.occurrenceId, patientId: command.patientId,
+          type: "HARDWARE_STARTED", source: "SYSTEM", occurredAt: now,
+        });
+      }
+      return { duplicate: false, commandStatus: "DISPATCHED" as const };
+    }
+
+    if (command.status !== "COMPLETED" && command.status !== "UNKNOWN") {
+      await ctx.db.patch("dispenseCommands", command._id, { status: "UNKNOWN", motorCompletion: "UNKNOWN", updatedAt: now });
+      await ctx.db.patch("doseOccurrences", command.occurrenceId, { attemptStatus: "UNKNOWN" });
+      if (session) {
+        await ctx.db.patch("medicationInteractionSessions", session._id, { state: "HARDWARE_UNKNOWN", updatedAt: now });
+        await ctx.db.insert("medicationInteractionEvents", {
+          sessionId: session._id, occurrenceId: command.occurrenceId, patientId: command.patientId,
+          type: "HARDWARE_UNKNOWN", source: "SYSTEM", occurredAt: now,
+        });
+      }
+    }
+    return { duplicate: false, commandStatus: "UNKNOWN" as const };
   },
 });
 

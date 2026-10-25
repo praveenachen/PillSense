@@ -20,6 +20,8 @@ export type TodayViewProps = {
   onOpenDispenser?: () => void;
   onOpenSchedule?: () => void;
   onOpenVoice?: () => void;
+  dueReminder?: { id: string; medicationName: string };
+  onOpenReminder?: (occurrenceId: string) => void;
 };
 
 /** "1 tablet · With breakfast", falling back to the slot when there is no instruction text. */
@@ -27,7 +29,7 @@ function nextDoseLine(row: TimelineRow) {
   return row.instructions ? compactDoseLine(row) : `${describeDose(row).dosage} · Slot ${row.slot}`;
 }
 
-export function TodayView({ greeting, name, now, device, nextDose, timeline, account, notifications, onOpenDispenser, onOpenSchedule, onOpenVoice }: TodayViewProps) {
+export function TodayView({ greeting, name, now, device, nextDose, timeline, account, notifications, onOpenDispenser, onOpenSchedule, onOpenVoice, dueReminder, onOpenReminder }: TodayViewProps) {
   const countdown = nextDose ? countdownLabel(nextDose.at, now) : null;
   const dateLabel = new Date(now).toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" });
   const activeSlot = nextDose && nextDose.slot >= 1 && nextDose.slot <= 7 ? nextDose.slot : null;
@@ -55,6 +57,8 @@ export function TodayView({ greeting, name, now, device, nextDose, timeline, acc
         </div>
         {timeline.length > 0 && <TakenRing taken={takenCount} total={timeline.length} />}
       </section>
+
+      {dueReminder && onOpenReminder && <button type="button" onClick={() => onOpenReminder(dueReminder.id)} className="pd-card-hero pd-focus pd-press flex min-h-20 w-full items-center gap-3 border-pd-accent/40 p-4 text-left" aria-label={`Start reminder for ${dueReminder.medicationName}`}><Icon name="pill" size={24} className="shrink-0 text-pd-accent-soft" /><span className="min-w-0 flex-1"><span className="block text-xs font-semibold text-pd-accent-soft">Medication reminder</span><span className="mt-1 block text-base font-semibold text-pd-text">It’s time for your {dueReminder.medicationName}</span><span className="mt-1 block text-sm text-pd-muted">Tap to talk with PillSense</span></span><Icon name="chevron" size={18} className="text-pd-muted" /></button>}
 
       <section aria-labelledby="next-med-title" className="pd-card-hero p-3.5">
         <div className="flex items-center justify-between gap-3">

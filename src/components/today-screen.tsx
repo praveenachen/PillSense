@@ -22,13 +22,13 @@ import {
 export type AccountSlot = ReactNode | ((initial: string) => ReactNode);
 const resolveAccount = (account: AccountSlot | undefined, initial: string) => (typeof account === "function" ? account(initial) : account);
 
-type TodayScreenProps = { account?: AccountSlot; onOpenDispenser?: () => void; onOpenSchedule?: () => void; onOpenVoice?: () => void };
+type TodayScreenProps = { account?: AccountSlot; onOpenDispenser?: () => void; onOpenSchedule?: () => void; onOpenVoice?: () => void; onOpenReminder?: (occurrenceId: string) => void };
 
-export function TodayScreen({ account, onOpenDispenser, onOpenSchedule, onOpenVoice }: TodayScreenProps) {
+export function TodayScreen({ account, onOpenDispenser, onOpenSchedule, onOpenVoice, onOpenReminder }: TodayScreenProps) {
   const { isLoading, isAuthenticated } = useConvexAuth();
   if (isLoading) return <StateCard title="Loading your day…">Confirming authentication and loading schedules.</StateCard>;
   if (!isAuthenticated) return <div className="space-y-4"><TodayBrandHeader account={resolveAccount(account, "P")} /><AuthRequired message="Patient schedules are private and require Convex to accept your Clerk session." /></div>;
-  return <AuthenticatedToday account={account} onOpenDispenser={onOpenDispenser} onOpenSchedule={onOpenSchedule} onOpenVoice={onOpenVoice} />;
+  return <AuthenticatedToday account={account} onOpenDispenser={onOpenDispenser} onOpenSchedule={onOpenSchedule} onOpenVoice={onOpenVoice} onOpenReminder={onOpenReminder} />;
 }
 
 function TodayBrandHeader({ account }: { account?: ReactNode }) {
@@ -50,7 +50,7 @@ const runtimeLabels: Record<string, string> = {
   CALIBRATION_REQUIRED: "Calibration required",
 };
 
-function AuthenticatedToday({ account, onOpenDispenser, onOpenSchedule, onOpenVoice }: TodayScreenProps) {
+function AuthenticatedToday({ account, onOpenDispenser, onOpenSchedule, onOpenVoice, onOpenReminder }: TodayScreenProps) {
   const { user } = useUser();
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
@@ -92,6 +92,7 @@ function AuthenticatedToday({ account, onOpenDispenser, onOpenSchedule, onOpenVo
   const nextDose = pickNextDose(rows);
   const signedInName = firstName(user?.fullName ?? user?.firstName ?? dashboard.patientName);
   const device = doses?.device;
+  const dueReminder = doses?.occurrences.find((dose) => dose.ingestionReport === "UNREPORTED" && dose.attemptStatus === "NONE" && now >= dose.eligibleFrom && now <= dose.expiresAt);
   const deviceView: TodayDevice = !device
     ? { label: "Dispenser", detail: "Open My Dispenser to pair Bluetooth", tone: "idle", connected: false }
     : { label: "Demo Dispenser", detail: runtimeLabels[device.state] ?? device.state.toLowerCase().replaceAll("_", " "), tone: device.connected && device.state === "READY" ? "ready" : "attention", connected: device.connected };
@@ -108,6 +109,8 @@ function AuthenticatedToday({ account, onOpenDispenser, onOpenSchedule, onOpenVo
       onOpenDispenser={onOpenDispenser}
       onOpenSchedule={onOpenSchedule}
       onOpenVoice={onOpenVoice}
+      dueReminder={dueReminder ? { id: dueReminder.id, medicationName: dueReminder.medicationName } : undefined}
+      onOpenReminder={onOpenReminder}
     />
   );
 }

@@ -51,6 +51,7 @@ export interface BluetoothServerLike {
 }
 
 export interface BluetoothDeviceLike {
+  id?: string;
   name?: string;
   gatt?: {
     connected: boolean;
@@ -63,6 +64,7 @@ export interface BluetoothDeviceLike {
 
 export interface WebBluetoothLike {
   requestDevice(options: BluetoothRequestOptionsLike): Promise<BluetoothDeviceLike>;
+  getDevices?: () => Promise<BluetoothDeviceLike[]>;
 }
 
 type TransportOptions = {
@@ -153,32 +155,40 @@ export class WebBluetoothDispenserStatusTransport {
       throw new Error("Web Bluetooth is unavailable. Use desktop Chrome on HTTPS or localhost.");
     }
 
-    this.detachDevice();
     const device = await bluetooth.requestDevice({
       filters: [{ name: PILLSENSE_BLE.deviceName, services: [PILLSENSE_BLE.serviceUuid] }],
       optionalServices: [PILLSENSE_BLE.serviceUuid],
     });
-    if (!device.gatt) throw new Error("The selected device does not expose a Bluetooth GATT server.");
+    await this.connectDevice(device, true);
+  }
 
-    this.device = device;
-    device.addEventListener("gattserverdisconnected", this.handleDisconnected);
-    try {
-      const server = await device.gatt.connect();
-      const service = await server.getPrimaryService(PILLSENSE_BLE.serviceUuid);
-      const [commandCharacteristic, statusCharacteristic] = await Promise.all([
-        service.getCharacteristic(PILLSENSE_BLE.commandCharacteristicUuid),
-        service.getCharacteristic(PILLSENSE_BLE.statusCharacteristicUuid),
-      ]);
-      this.server = server;
-      this.commandCharacteristic = commandCharacteristic;
-      this.statusCharacteristic = statusCharacteristic;
-      await this.enableStatusNotifications(statusCharacteristic);
-      this.notifyConnection(true);
-    } catch (error) {
-      device.gatt.disconnect();
-      this.clearConnection();
-      throw error;
+  /**
+   * Reconnects only a device for which this origin already has permission.
+   * It never opens the chooser and never writes a motor command.
+   */
+  async reconnectPreviouslyAuthorizedDevice(expectedDeviceId: string): Promise<void> {
+    const bluetooth = this.suppliedBluetooth ?? browserBluetooth();
+    if (!bluetooth) {
+      throw new Error("Web Bluetooth is unavailable. Use desktop Chrome on HTTPS or localhost.");
     }
+    if (this.isConnected() && this.device?.id === expectedDeviceId) return;
+
+    let device = this.device?.id === expectedDeviceId ? this.device : null;
+    if (!device) {
+      if (!bluetooth.getDevices) {
+        throw new Error("Chrome cannot restore the previously paired Arduino in this browser session.");
+      }
+      const permitted = await bluetooth.getDevices();
+      device = permitted.find((candidate) => candidate.id === expectedDeviceId) ?? null;
+    }
+    if (!device) {
+      throw new Error("The previously paired Arduino is no longer authorized for this site.");
+    }
+    await this.connectDevice(device, false);
+  }
+
+  getDeviceId(): string | null {
+    return this.device?.id ?? null;
   }
 
   async getStatus(): Promise<ArduinoStatusReading> {
@@ -372,6 +382,42 @@ export class WebBluetoothDispenserStatusTransport {
       await characteristic.startNotifications();
     } catch {
       characteristic.removeEventListener?.("characteristicvaluechanged", this.handleStatusNotification);
+    }
+  }
+
+  private async connectDevice(device: BluetoothDeviceLike, replaceDevice: boolean) {
+    if (!device.gatt) throw new Error("The selected device does not expose a Bluetooth GATT server.");
+    // Re-selecting the same live Arduino must not tear down its GATT connection.
+    if (device.id && this.isConnected() && this.device?.id === device.id) return;
+    if (replaceDevice) this.detachDevice();
+    else {
+      this.statusCharacteristic?.removeEventListener?.(
+        "characteristicvaluechanged",
+        this.handleStatusNotification,
+      );
+      this.clearConnection();
+    }
+
+    this.device?.removeEventListener("gattserverdisconnected", this.handleDisconnected);
+    this.device = device;
+    device.addEventListener("gattserverdisconnected", this.handleDisconnected);
+    try {
+      const server = await device.gatt.connect();
+      const service = await server.getPrimaryService(PILLSENSE_BLE.serviceUuid);
+      const [commandCharacteristic, statusCharacteristic] = await Promise.all([
+        service.getCharacteristic(PILLSENSE_BLE.commandCharacteristicUuid),
+        service.getCharacteristic(PILLSENSE_BLE.statusCharacteristicUuid),
+      ]);
+      this.server = server;
+      this.commandCharacteristic = commandCharacteristic;
+      this.statusCharacteristic = statusCharacteristic;
+      await this.enableStatusNotifications(statusCharacteristic);
+      this.notifyConnection(true);
+    } catch (error) {
+      device.gatt.disconnect();
+      this.clearConnection();
+      this.notifyConnection(false);
+      throw error;
     }
   }
 

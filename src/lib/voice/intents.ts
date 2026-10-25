@@ -5,6 +5,8 @@ export type VoiceIntent =
   | { type: "AMBIGUOUS"; reason: string }
   | { type: "UNSUPPORTED" };
 
+export type MedicationSessionIntent = "YES" | "READY" | "NO" | "REPEAT" | "REQUEST_MORE_INFORMATION";
+
 function normalized(text: string) {
   return text.toLowerCase().replace(/[’']/g, "'").replace(/[^a-z0-9' ]/g, " ").replace(/\s+/g, " ").trim();
 }
@@ -30,5 +32,15 @@ export function parseConfirmation(text: string): "CONFIRM" | "CANCEL" | null {
   const value = normalized(text);
   if (/^(confirm|yes confirm|yes that is correct|yes correct)$/.test(value)) return "CONFIRM";
   if (/^(cancel|no cancel|never mind|nevermind)$/.test(value)) return "CANCEL";
+  return null;
+}
+
+export function parseMedicationSessionIntent(text: string): MedicationSessionIntent | null {
+  const value = text.toLowerCase().replace(/[^a-z ]/g, " ").replace(/\s+/g, " ").trim();
+  if (/^(yes i m ready|yes i am ready|ready|i am ready|i m ready|ready for my medication|i am ready for my medication|i m ready for my medication)$/.test(value)) return "READY";
+  if (/^(yes|yes please|sure|continue|okay|ok)$/.test(value)) return "YES";
+  if (/^(no|no thanks|not now|stop|decline)$/.test(value)) return "NO";
+  if (/^(repeat|say that again|repeat that)$/.test(value)) return "REPEAT";
+  if (/^(more information|tell me more|more info|what else|side effects|tell me about side effects|what are the side effects)$/.test(value)) return "REQUEST_MORE_INFORMATION";
   return null;
 }

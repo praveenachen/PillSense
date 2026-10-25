@@ -1,16 +1,18 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { useMutation, useQuery } from "convex/react";
+import { api } from "../../convex/_generated/api";
 import { CarouselGraphic, Icon, SectionTitle, StatusPill } from "./mobile-ui";
 import { createArduinoOperationId, type ArduinoMotorResult } from "@/lib/dispenser/ble-protocol";
 import {
   ArduinoMotorOutcomeUncertainError,
-  WebBluetoothDispenserStatusTransport,
   type H3DiagnosticEntry,
 } from "@/lib/dispenser/web-bluetooth-status-transport";
+import { useArduinoGateway } from "./arduino-gateway-provider";
 
 type MotorPhase = "READY" | "SENDING" | "IN_PROGRESS" | "STEPS_COMPLETED" | "UNCERTAIN";
-type BusyAction = "connect" | "status" | "move" | "result" | null;
+type BusyAction = "connect" | "status" | "move" | "result" | "arm" | null;
 type DispatchEvidence =
   | "COMMAND_NOT_SENT"
   | "WRITE_PENDING"
@@ -68,17 +70,12 @@ export function ArduinoStatusPanel({ onOpenSetup, onDiagnostic, onSnapshot }: {
   onDiagnostic?: (entry: H3DiagnosticEntry) => void;
   onSnapshot?: (snapshot: ArduinoLabSnapshot) => void;
 } = {}) {
-  const [transport] = useState(() => new WebBluetoothDispenserStatusTransport({
-    diagnostic: (entry) => {
-      logTransportDiagnostic(entry);
-      onDiagnostic?.(entry);
-    },
-  }));
-  const [connected, setConnected] = useState(false);
+  const gateway = useArduinoGateway();
+  const connected = gateway.connected;
   const [busyAction, setBusyAction] = useState<BusyAction>(null);
   const [lastResponse, setLastResponse] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [deviceReady, setDeviceReady] = useState(false);
+  const deviceReady = gateway.reportedStatus === "READY";
   const [carouselEmpty, setCarouselEmpty] = useState(false);
   const [alignedBeforeStartup, setAlignedBeforeStartup] = useState(false);
   const [movingPartsClear, setMovingPartsClear] = useState(false);
@@ -89,27 +86,21 @@ export function ArduinoStatusPanel({ onOpenSetup, onDiagnostic, onSnapshot }: {
   const [dispatchEvidence, setDispatchEvidence] = useState<DispatchEvidence>("COMMAND_NOT_SENT");
   const dispatchLocked = useRef(false);
   const motorPhaseRef = useRef<MotorPhase | null>(null);
+  const [armNow, setArmNow] = useState(() => Date.now());
+  const arm = useQuery(api.hardwareLab.voiceDemoArm, { now: armNow });
+  const armVoiceDemo = useMutation(api.hardwareLab.armVoiceDemo);
+  const disarmVoiceDemo = useMutation(api.hardwareLab.disarmVoiceDemo);
+  const subscribeDiagnostics = gateway.subscribeDiagnostics;
 
   function setPhase(phase: MotorPhase) {
     motorPhaseRef.current = phase;
     setMotorPhase(phase);
   }
 
-  useEffect(() => {
-    return transport.subscribe((nextConnected) => {
-      setConnected(nextConnected);
-      if (!nextConnected) {
-        setDeviceReady(false);
-        if (dispatchLocked.current && motorPhaseRef.current !== "STEPS_COMPLETED") {
-          motorPhaseRef.current = "UNCERTAIN";
-          setMotorPhase("UNCERTAIN");
-          setError("Arduino disconnected after dispatch. Do not resend MOVE; reconnect and use Get last result.");
-        } else {
-          setError("Arduino disconnected. Reconnect before using the hardware test controls.");
-        }
-      }
-    });
-  }, [transport]);
+  useEffect(() => subscribeDiagnostics((entry) => {
+    logTransportDiagnostic(entry);
+    onDiagnostic?.(entry);
+  }), [subscribeDiagnostics, onDiagnostic]);
 
   useEffect(() => {
     onSnapshot?.({
@@ -151,10 +142,8 @@ export function ArduinoStatusPanel({ onOpenSetup, onDiagnostic, onSnapshot }: {
     setError(null);
     try {
       // requestDevice is reached directly from this user-initiated click handler.
-      await transport.connect();
-      setConnected(true);
+      await gateway.connect();
     } catch (caught) {
-      setConnected(false);
       setError(messageFor(caught));
     } finally {
       setBusyAction(null);
@@ -165,13 +154,11 @@ export function ArduinoStatusPanel({ onOpenSetup, onDiagnostic, onSnapshot }: {
     setBusyAction("status");
     setError(null);
     try {
-      const reading = await transport.getStatus();
+      const reading = await gateway.getStatus();
       setLastResponse(reading.response);
       const ready = reading.response === "READY";
-      setDeviceReady(ready);
       if (ready && !dispatchLocked.current) setPhase("READY");
     } catch (caught) {
-      setDeviceReady(false);
       setError(messageFor(caught));
     } finally {
       setBusyAction(null);
@@ -187,6 +174,8 @@ export function ArduinoStatusPanel({ onOpenSetup, onDiagnostic, onSnapshot }: {
     });
     if (
       dispatchLocked.current ||
+      gateway.motorDispatched ||
+      arm?.status === "ARMED" ||
       !connected ||
       !deviceReady ||
       !carouselEmpty ||
@@ -228,7 +217,7 @@ export function ArduinoStatusPanel({ onOpenSetup, onDiagnostic, onSnapshot }: {
     setDispatchEvidence("WRITE_PENDING");
     setPhase("SENDING");
     try {
-      applyMotorResult(await transport.runSupervisedSlot6MotorTest(nextOperationId));
+      applyMotorResult(await gateway.dispatchSlot6(nextOperationId));
     } catch (caught) {
       if (caught instanceof ArduinoMotorOutcomeUncertainError) {
         setDispatchEvidence(
@@ -260,7 +249,7 @@ export function ArduinoStatusPanel({ onOpenSetup, onDiagnostic, onSnapshot }: {
     setBusyAction("result");
     setError(null);
     try {
-      applyMotorResult(await transport.getLastMotorResult(operationId));
+      applyMotorResult(await gateway.getLastResult(operationId));
     } catch (caught) {
       setPhase("UNCERTAIN");
       setError(messageFor(caught));
@@ -271,7 +260,36 @@ export function ArduinoStatusPanel({ onOpenSetup, onDiagnostic, onSnapshot }: {
 
   const busy = busyAction !== null;
   const confirmationsComplete = carouselEmpty && alignedBeforeStartup && movingPartsClear;
-  const runDisabled = busy || !connected || !deviceReady || !confirmationsComplete || motorDispatched;
+  const armed = arm?.status === "ARMED" && arm.connectionId === gateway.connectionId;
+  const liveArmed = armed && connected && gateway.isConnected() && deviceReady;
+  const movementLocked = motorDispatched || gateway.motorDispatched;
+  const runDisabled = busy || !connected || !deviceReady || !confirmationsComplete || movementLocked || armed;
+
+  async function toggleVoiceDemoArm() {
+    setBusyAction("arm");
+    setError(null);
+    try {
+      if (arm?.status === "ARMED") {
+        await disarmVoiceDemo({ armId: arm.armId });
+      } else {
+        if (!gateway.connectionId || !connected || !deviceReady || !confirmationsComplete || movementLocked) {
+          throw new Error("Connect, read READY, complete all safety confirmations, and use a fresh firmware boot before arming voice demo mode.");
+        }
+        await armVoiceDemo({
+          connectionId: gateway.connectionId,
+          observedStatus: "READY",
+          emptyOrInertConfirmed: true,
+          manualHomeConfirmed: true,
+          movingPartsClear: true,
+        });
+      }
+      setArmNow(Date.now());
+    } catch (caught) {
+      setError(messageFor(caught));
+    } finally {
+      setBusyAction(null);
+    }
+  }
 
   const attention = motorPhase === "UNCERTAIN" || Boolean(error);
   // The check icon appears only when the firmware reports READY or the step sequence completed.
@@ -296,7 +314,8 @@ export function ArduinoStatusPanel({ onOpenSetup, onDiagnostic, onSnapshot }: {
     !connected && "connect the Arduino",
     connected && !deviceReady && "read device status until it reports READY",
     !confirmationsComplete && "tick all three safety confirmations",
-    motorDispatched && "movement is locked for this page session",
+    movementLocked && "movement is locked for this browser session",
+    armed && "disarm the voice demo before using the manual motor test",
   ].filter(Boolean) as string[];
   const activity: Array<{ title: string; detail: string; tone: "ok" | "warn" | "info" }> = [];
   if (operationId) {
@@ -341,19 +360,31 @@ export function ArduinoStatusPanel({ onOpenSetup, onDiagnostic, onSnapshot }: {
         <legend className="px-1 text-[0.7rem] font-bold uppercase tracking-wide text-[#a32020]">Empty carousel only · no medications</legend>
         <div className="text-[0.78rem] leading-[1.15rem] text-[#1e293b]">
           <label className="flex min-h-11 items-center gap-3 py-1">
-            <input type="checkbox" checked={carouselEmpty} onChange={(event) => setCarouselEmpty(event.target.checked)} disabled={motorDispatched} className="size-5 shrink-0 accent-[#0f766e]" />
+            <input type="checkbox" checked={carouselEmpty} onChange={(event) => setCarouselEmpty(event.target.checked)} disabled={movementLocked || armed} className="size-5 shrink-0 accent-[#0f766e]" />
             <span>I physically confirmed the carousel is empty.</span>
           </label>
           <label className="flex min-h-11 items-center gap-3 py-1">
-            <input type="checkbox" checked={alignedBeforeStartup} onChange={(event) => setAlignedBeforeStartup(event.target.checked)} disabled={motorDispatched} className="size-5 shrink-0 accent-[#0f766e]" />
+            <input type="checkbox" checked={alignedBeforeStartup} onChange={(event) => setAlignedBeforeStartup(event.target.checked)} disabled={movementLocked || armed} className="size-5 shrink-0 accent-[#0f766e]" />
             <span>I physically aligned the device to Slot 0 before startup. This is not sensor-verified.</span>
           </label>
           <label className="flex min-h-11 items-center gap-3 py-1">
-            <input type="checkbox" checked={movingPartsClear} onChange={(event) => setMovingPartsClear(event.target.checked)} disabled={motorDispatched} className="size-5 shrink-0 accent-[#0f766e]" />
+            <input type="checkbox" checked={movingPartsClear} onChange={(event) => setMovingPartsClear(event.target.checked)} disabled={movementLocked || armed} className="size-5 shrink-0 accent-[#0f766e]" />
             <span>I confirmed hands, cables, and other objects are clear of moving parts.</span>
           </label>
         </div>
       </fieldset>
+
+      <div className="rounded-2xl border border-violet-300/25 bg-violet-300/[.08] p-3">
+        <div className="flex items-start justify-between gap-3">
+          <div><p className="text-sm font-semibold text-[#0f172a]">Voice-to-hardware demo</p><p className="mt-1 text-xs leading-5 text-[#64748b]">Development-only, Slot 6, one movement. Arming expires after 10 minutes and is bound to this Bluetooth connection.</p></div>
+          <StatusPill tone={liveArmed ? "green" : "slate"} dot>{armed ? (liveArmed ? "Armed" : "Armed · disconnected") : "Disarmed"}</StatusPill>
+        </div>
+        <button type="button" onClick={() => void toggleVoiceDemoArm()} disabled={busy || movementLocked || (!armed && (!connected || !deviceReady || !confirmationsComplete || arm?.status === "UNAVAILABLE"))} className="ps-focus mt-3 min-h-11 w-full rounded-full border border-violet-400/35 px-4 text-sm font-semibold text-violet-700 disabled:opacity-50">
+          {busyAction === "arm" ? "Updating demo arm…" : armed ? "Disarm voice demo" : "Arm voice demo for Slot 6"}
+        </button>
+        {arm?.status === "UNAVAILABLE" && <p className="mt-2 text-xs text-[#a32020]">{arm.reason}</p>}
+        {arm?.status === "EXPIRED" && <p className="mt-2 text-xs text-[#64748b]">The previous arm expired. Re-check the physical setup before arming again.</p>}
+      </div>
 
       <div>
         <button type="button" onClick={runMotorTest} disabled={runDisabled} className="ps-cta flex min-h-[3.4rem] w-full items-center justify-center gap-2 rounded-full px-5 text-[1rem] font-semibold">
@@ -363,7 +394,7 @@ export function ArduinoStatusPanel({ onOpenSetup, onDiagnostic, onSnapshot }: {
         {runDisabled && runBlockers.length > 0 && !busy && (
           <p className="mt-2 px-2 text-xs leading-5 text-[#64748b]">To enable: {runBlockers.join("; ")}.</p>
         )}
-        {motorDispatched && (
+        {movementLocked && (
           <p className="mt-2 px-2 text-xs font-semibold leading-5 text-[#a32020]">
             MOVE is locked for this page session. Reconnecting and Get Last Result are read-only and will not resend it.
           </p>
@@ -371,9 +402,9 @@ export function ArduinoStatusPanel({ onOpenSetup, onDiagnostic, onSnapshot }: {
       </div>
 
       <div className="ps-card grid grid-cols-3 divide-x divide-[#e6eef6] overflow-hidden">
-        <button type="button" onClick={connect} disabled={busy} className="ps-focus flex min-h-[3.8rem] flex-col items-center justify-center gap-1 px-1 text-center text-[0.7rem] font-medium text-[#475569] disabled:opacity-50">
+        <button type="button" onClick={connect} disabled={busy || connected} className="ps-focus flex min-h-[3.8rem] flex-col items-center justify-center gap-1 px-1 text-center text-[0.7rem] font-medium text-[#475569] disabled:opacity-50">
           <span className="text-[#0f766e]"><Icon name="bluetooth" size={21} /></span>
-          {busyAction === "connect" ? "Connecting…" : connected ? "Reconnect" : "Pair device"}
+          {busyAction === "connect" ? "Connecting…" : connected ? "Paired" : "Pair device"}
         </button>
         <button type="button" onClick={getStatus} disabled={busy || !connected} className="ps-focus flex min-h-[3.8rem] flex-col items-center justify-center gap-1 px-1 text-center text-[0.7rem] font-medium text-[#475569] disabled:opacity-50">
           <span className="text-[#0f766e]"><Icon name="info" size={21} /></span>

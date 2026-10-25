@@ -107,6 +107,10 @@ export const listForPatient = query({
         return {
           id: occurrence._id,
           medicationId: occurrence.medicationId,
+          resolvedDemoLeftover:
+            occurrence.mode === "demo"
+            && occurrence.reminderState === "RESOLVED"
+            && occurrence.ingestionReport === "UNREPORTED",
           expiredDemoLeftover:
             occurrence.mode === "demo"
             && !occurrence.occurrenceKey.startsWith("dashboard-showcase:")
@@ -144,6 +148,7 @@ export const listForPatient = query({
 
 type ListedOccurrence = {
   medicationId: string;
+  resolvedDemoLeftover: boolean;
   expiredDemoLeftover: boolean;
   scheduledFor: number;
   eligibility: string;
@@ -157,7 +162,11 @@ type ListedOccurrence = {
  * row when the same medication has two occurrences at the same time, preferring the one with a report or attempt.
  */
 function withoutObsoleteAndDuplicates<T extends ListedOccurrence>(rows: T[]) {
-  const current = rows.filter((row) => !row.expiredDemoLeftover && (row.eligibility !== "STALE" || row.ingestionReport !== "UNREPORTED"));
+  const current = rows.filter((row) =>
+    !row.resolvedDemoLeftover
+    && !row.expiredDemoLeftover
+    && (row.eligibility !== "STALE" || row.ingestionReport !== "UNREPORTED"),
+  );
   const rank = (row: T) => (row.ingestionReport !== "UNREPORTED" ? 2 : 0) + (row.attemptStatus !== "NONE" ? 1 : 0);
   const kept = new Map<string, T>();
   for (const row of current) {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseConfirmation, parseVoiceIntent } from "./intents";
+import { parseConfirmation, parseMedicationSessionIntent, parseVoiceIntent } from "./intents";
 
 describe("voice intent parser", () => {
   it.each([
@@ -18,5 +18,13 @@ describe("voice intent parser", () => {
     expect(parseConfirmation("yes that is correct")).toBe("CONFIRM");
     expect(parseConfirmation("maybe")).toBeNull();
     expect(parseConfirmation("cancel")).toBe("CANCEL");
+  });
+
+  it.each(["Yes, I'm ready", "Yes, I am ready", "I’m ready", "yes please"])("recognizes bounded readiness phrase %s", (phrase) => {
+    expect(parseMedicationSessionIntent(phrase)).toBe(phrase === "yes please" ? "YES" : "READY");
+  });
+
+  it("recognizes a side-effect education request without treating it as readiness", () => {
+    expect(parseMedicationSessionIntent("What are the side effects?")).toBe("REQUEST_MORE_INFORMATION");
   });
 });

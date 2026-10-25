@@ -2,12 +2,15 @@
 
 import { useConvexAuth, useMutation, useQuery } from "convex/react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import Link from "next/link";
 import type { Id } from "../../convex/_generated/dataModel";
 import { api } from "../../convex/_generated/api";
 import { VoiceView, type VoiceMessage } from "./voice-view";
-import { parseConfirmation, parseVoiceIntent } from "@/lib/voice/intents";
+import { parseConfirmation, parseMedicationSessionIntent, parseVoiceIntent } from "@/lib/voice/intents";
 import { canCommitVoiceAction, canProcessRecording, MICROPHONE_UNAVAILABLE_MESSAGE, TRANSCRIPTION_UNAVAILABLE_MESSAGE } from "@/lib/voice/session-safety";
+import { runVoiceHardwareDemo, type VoiceHardwareStage } from "@/lib/voice/voice-hardware-demo";
+import { useArduinoGateway } from "./arduino-gateway-provider";
+import { VisionObservationPanel } from "./vision-observation-panel";
+import { reminderPrompt } from "@/lib/voice/reminder-prompt";
 
 type Phase = "IDLE" | "LISTENING" | "PROCESSING" | "SPEAKING";
 type PendingAction =
@@ -20,13 +23,15 @@ function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : "Voice interaction failed. Touch controls remain available.";
 }
 
-export function VoiceCompanion() {
+type VoiceCompanionProps = { active?: boolean; startRequest?: { occurrenceId: string; token: number } | null };
+
+export function VoiceCompanion(props: VoiceCompanionProps = {}) {
   const auth = useConvexAuth();
   if (auth.isLoading || !auth.isAuthenticated) return null;
-  return <AuthenticatedVoiceCompanion />;
+  return <AuthenticatedVoiceCompanion {...props} />;
 }
 
-function AuthenticatedVoiceCompanion() {
+function AuthenticatedVoiceCompanion({ active = true, startRequest }: VoiceCompanionProps) {
   const [now, setNow] = useState(() => Date.now());
   const doses = useQuery(api.occurrences.listForPatient, { now });
   const reportIngestion = useMutation(api.dispensing.reportIngestion);
@@ -35,6 +40,10 @@ function AuthenticatedVoiceCompanion() {
   const recordGreetingOutcome = useMutation(api.medicationSessions.recordGreetingOutcome);
   const respondToSession = useMutation(api.medicationSessions.respond);
   const setCameraConsent = useMutation(api.medicationSessions.setCameraConsent);
+  const prepareHardwareDispatch = useMutation(api.medicationSessions.prepareHardwareDispatch);
+  const markHardwareDispatched = useMutation(api.medicationSessions.markHardwareDispatched);
+  const recordHardwareEvent = useMutation(api.medicationSessions.recordHardwareEvent);
+  const gateway = useArduinoGateway();
   const [phase, setPhase] = useState<Phase>("IDLE");
   const [connection, setConnection] = useState<"CHECKING" | "READY" | "TEXT_ONLY">("CHECKING");
   const [caption, setCaption] = useState("");
@@ -46,6 +55,8 @@ function AuthenticatedVoiceCompanion() {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [nothingCaptured, setNothingCaptured] = useState(false);
+  const [hardwareStage, setHardwareStage] = useState<VoiceHardwareStage | null>(null);
+  const hardwareRun = useRef(false);
   const messageIdRef = useRef(0);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const audioUrlRef = useRef<string | null>(null);
@@ -55,26 +66,36 @@ function AuthenticatedVoiceCompanion() {
   const recordingTimerRef = useRef<number | null>(null);
   const cancelledRef = useRef(false);
   const requestRef = useRef<AbortController | null>(null);
+  const activeRef = useRef(active);
+  const autoListenRef = useRef(false);
+  const listenRef = useRef<(() => Promise<void>) | null>(null);
+  const cancelRef = useRef<(() => void) | null>(null);
+  const listeningStartRef = useRef(false);
+  const lifecycleRef = useRef(0);
+  const launchedRequestRef = useRef<number | null>(null);
+  const scheduledStartRef = useRef(false);
 
   const addMessage = useCallback((role: VoiceMessage["role"], text: string) => {
     const cleaned = text.trim();
     if (!cleaned) return;
-    messageIdRef.current += 1;
-    setConversation((current) => [...current, { id: messageIdRef.current, role, text: cleaned }].slice(-20));
+    const id = ++messageIdRef.current;
+    setConversation((current) => [...current, { id, role, text: cleaned }].slice(-20));
   }, []);
 
   const stopSpeaking = useCallback(() => {
+    if (audioRef.current) audioRef.current.onended = null;
     audioRef.current?.pause();
     if (audioRef.current) audioRef.current.currentTime = 0;
     setPhase((current) => current === "SPEAKING" ? "IDLE" : current);
   }, []);
 
   const speak = useCallback(async (text: string, recordMessage = true) => {
+    const lifecycle = lifecycleRef.current;
     stopSpeaking();
     setCaption(text);
     if (recordMessage) addMessage("assistant", text);
     setError(null);
-    if (connection === "TEXT_ONLY") return false;
+    if (connection === "TEXT_ONLY" || !activeRef.current || cancelledRef.current) return false;
     setPhase("PROCESSING");
     const controller = new AbortController();
     requestRef.current = controller;
@@ -82,12 +103,16 @@ function AuthenticatedVoiceCompanion() {
       const response = await fetch("/api/voice/speak", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text }), signal: controller.signal });
       if (!response.ok) throw new Error("Cartesia speech is unavailable; the full message is still shown as text.");
       const blob = await response.blob();
+      if (!activeRef.current || cancelledRef.current || lifecycle !== lifecycleRef.current) return false;
       if (audioUrlRef.current) URL.revokeObjectURL(audioUrlRef.current);
       const url = URL.createObjectURL(blob);
       audioUrlRef.current = url;
       const audio = new Audio(url);
       audioRef.current = audio;
-      audio.onended = () => setPhase("IDLE");
+      audio.onended = () => {
+        setPhase("IDLE");
+        if (autoListenRef.current && activeRef.current && !cancelledRef.current && text.trim().endsWith("?")) void listenRef.current?.();
+      };
       audio.onerror = () => { setPhase("IDLE"); setError("Audio playback failed. The message remains available as text."); };
       setPhase("SPEAKING");
       await audio.play();
@@ -106,6 +131,12 @@ function AuthenticatedVoiceCompanion() {
       setConnection(data.configured ? "READY" : "TEXT_ONLY");
     }).catch(() => setConnection("TEXT_ONLY"));
     return () => {
+      cancelledRef.current = true;
+      activeRef.current = false;
+      autoListenRef.current = false;
+      lifecycleRef.current += 1;
+      audioRef.current?.pause();
+      if (recordingTimerRef.current) window.clearTimeout(recordingTimerRef.current);
       requestRef.current?.abort();
       if (recorderRef.current?.state === "recording") recorderRef.current.stop();
       streamRef.current?.getTracks().forEach((track) => track.stop());
@@ -113,39 +144,136 @@ function AuthenticatedVoiceCompanion() {
     };
   }, []);
 
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 30_000);
+    return () => window.clearInterval(timer);
+  }, []);
+
   const relevant = doses?.occurrences.filter((dose) => dose.ingestionReport === "UNREPORTED" && dose.scheduledFor <= now + 30 * 60_000) ?? [];
   const due = relevant.filter((dose) => now >= dose.eligibleFrom && now <= dose.expiresAt);
+  const scheduledDose = startRequest ? due.find((dose) => dose.id === startRequest.occurrenceId) : due[0];
   const interaction = useQuery(
     api.medicationSessions.getForOccurrence,
-    due[0] ? { occurrenceId: due[0].id } : "skip",
+    scheduledDose ? { occurrenceId: scheduledDose.id } : "skip",
   );
 
-  async function startScheduledConversation() {
-    const dose = due[0];
-    if (!dose) return;
+  const startScheduledConversation = useCallback(async () => {
+    const dose = scheduledDose;
+    if (!dose || scheduledStartRef.current) return;
+    scheduledStartRef.current = true;
+    cancelledRef.current = false;
+    autoListenRef.current = true;
     setError(null);
-    const claimed = await claimGreeting({ occurrenceId: dose.id });
-    const greeting = `Hello ${claimed.session.patientFirstName}. It's time for your ${claimed.session.medicationName}. Are you ready for your medication?`;
-    setCaption(greeting);
-    if (!claimed.shouldPlay) {
-      addMessage("assistant", greeting);
-      setSuccess("This reminder session was already started. Continue below; the greeting was not automatically replayed.");
-      return;
+    try {
+      const claimed = await claimGreeting({ occurrenceId: dose.id });
+      const played = await speak(reminderPrompt(claimed.session));
+      if (claimed.shouldPlay) await recordGreetingOutcome({
+        sessionId: claimed.session.id,
+        outcome: played ? "PLAYED" : connection === "TEXT_ONLY" ? "PLAYBACK_BLOCKED" : "FAILED",
+      });
+    } catch (caught) {
+      setError(errorMessage(caught));
+    } finally {
+      scheduledStartRef.current = false;
     }
-    const played = await speak(greeting);
-    await recordGreetingOutcome({
-      sessionId: claimed.session.id,
-      outcome: played ? "PLAYED" : connection === "TEXT_ONLY" ? "PLAYBACK_BLOCKED" : "FAILED",
+  }, [scheduledDose, claimGreeting, speak, recordGreetingOutcome, connection]);
+
+  useEffect(() => {
+    activeRef.current = active;
+    if (!active) cancelRef.current?.();
+  }, [active]);
+
+  useEffect(() => {
+    if (!active || !startRequest || connection === "CHECKING" || !scheduledDose || launchedRequestRef.current === startRequest.token) return;
+    launchedRequestRef.current = startRequest.token;
+    void startScheduledConversation();
+  }, [active, startRequest, connection, scheduledDose, startScheduledConversation]);
+
+  async function runArmedHardwareDemo(occurrenceId: Id<"doseOccurrences">) {
+    if (hardwareRun.current) return;
+    hardwareRun.current = true;
+    console.info("[PillSense voice hardware] readiness_preflight", {
+      reactConnected: gateway.connected,
+      liveGattConnected: gateway.isConnected(),
+      hasConnectionBinding: Boolean(gateway.connectionId),
     });
+    setHardwareStage("PREPARING");
+    setError(null);
+    setSuccess(null);
+    try {
+      const outcome = await runVoiceHardwareDemo({
+        occurrenceId,
+        connectionId: gateway.connectionId,
+        isConnected: gateway.isConnected,
+        ensureConnected: gateway.ensureArmedConnection,
+        prepare: (args) => prepareHardwareDispatch({
+          occurrenceId: args.occurrenceId as Id<"doseOccurrences">,
+          connectionId: args.connectionId,
+        }),
+        markDispatched: markHardwareDispatched,
+        dispatch: gateway.dispatchSlot6,
+        reconcile: gateway.getLastResult,
+        record: recordHardwareEvent,
+        onStage: setHardwareStage,
+      });
+      if (outcome.stage === "COMPLETED") {
+        const text = "The motor sequence is complete. Please check that the carousel returned to Slot 0.";
+        await speak(text);
+      } else if (outcome.stage === "UNKNOWN") {
+        await speak("The hardware outcome is uncertain. I will not send another movement command. An operator must reconcile the existing result.");
+      } else if (outcome.alreadyPersisted) {
+        await speak("This reminder already has a hardware attempt. I will not send another movement command.");
+      }
+    } catch (caught) {
+      console.info("[PillSense voice hardware] readiness_blocked", {
+        errorName: caught instanceof Error ? caught.name : "UnknownError",
+        liveGattConnected: gateway.isConnected(),
+        hasConnectionBinding: Boolean(gateway.connectionId),
+      });
+      setHardwareStage("BLOCKED");
+      const text = errorMessage(caught);
+      await speak(`${text} No movement command will be retried automatically.`);
+      setError(text);
+    } finally {
+      hardwareRun.current = false;
+    }
   }
 
-  function sessionIntent(text: string) {
-    const value = text.toLowerCase().replace(/[^a-z ]/g, " ").replace(/\s+/g, " ").trim();
-    if (/^(yes|yes please|ready|i am ready|sure|continue|okay|ok)$/.test(value)) return "YES" as const;
-    if (/^(no|no thanks|not now|stop|decline)$/.test(value)) return "NO" as const;
-    if (/^(repeat|say that again|repeat that)$/.test(value)) return "REPEAT" as const;
-    if (/^(more information|tell me more|more info|what else)$/.test(value)) return "REQUEST_MORE_INFORMATION" as const;
-    return null;
+  async function reconcilePersistedHardware() {
+    const hardware = interaction?.hardware;
+    if (!hardware?.operationId || hardware.status !== "DISPATCHED" || hardwareRun.current) return;
+    hardwareRun.current = true;
+    setError(null);
+    setHardwareStage("MOVING");
+    try {
+      if (!gateway.isConnected()) await gateway.connect();
+      const result = await gateway.getLastResult(hardware.operationId);
+      const type = result.kind === "DONE" ? "MOTOR_COMPLETED"
+        : result.kind === "STARTED" ? "MOTOR_STARTED"
+          : result.kind === "REJECTED" ? "FAULT"
+            : "UNKNOWN";
+      await recordHardwareEvent({
+        commandId: hardware.operationId,
+        operationId: hardware.operationId,
+        type,
+        occurredAt: Date.now(),
+      });
+      if (result.kind === "DONE") {
+        setHardwareStage("COMPLETED");
+        await speak("The Arduino reported that the complete motor step sequence finished. No second movement command was sent. Please physically verify Slot 0.");
+      } else if (result.kind === "STARTED") {
+        setHardwareStage("MOVING");
+        setSuccess("The existing operation is still in progress. Reconciliation sent no movement command.");
+      } else {
+        setHardwareStage("UNKNOWN");
+        await speak("The existing hardware operation is uncertain. I will not send another movement command.");
+      }
+    } catch (caught) {
+      setHardwareStage("UNKNOWN");
+      setError(`${errorMessage(caught)} Only read-only reconciliation was attempted; MOVE was not resent.`);
+    } finally {
+      hardwareRun.current = false;
+    }
   }
 
   async function confirmPending() {
@@ -165,16 +293,24 @@ function AuthenticatedVoiceCompanion() {
   }
 
   async function interpret(text: string, source: "VOICE" | "TEXT" = "TEXT") {
+    if (!activeRef.current) return;
+    cancelledRef.current = false;
     const cleaned = text.trim();
     setTranscript(cleaned); setSuccess(null); setError(null);
     if (cleaned) addMessage("user", cleaned);
     if (!cleaned) { setNothingCaptured(true); return; }
-    const boundedIntent = interaction && !["DECLINED", "COMPLETED"].includes(interaction.state)
-      ? sessionIntent(cleaned)
-      : null;
-    if (boundedIntent && due[0]) {
-      const result = await respondToSession({ occurrenceId: due[0].id, intent: boundedIntent, source });
-      await speak(result.response);
+    const parsedSessionIntent = interaction ? parseMedicationSessionIntent(cleaned) : null;
+    const boundedIntent = interaction && (parsedSessionIntent === "REQUEST_MORE_INFORMATION" || !["DECLINED", "COMPLETED"].includes(interaction.state))
+      ? parsedSessionIntent : null;
+    if (boundedIntent && scheduledDose) {
+      const result = await respondToSession({ occurrenceId: scheduledDose.id, intent: boundedIntent, source });
+      if (result.hardwareDispatchEligible) {
+        setCaption(result.response);
+        addMessage("assistant", result.response);
+        await runArmedHardwareDemo(scheduledDose.id);
+      } else {
+        await speak(result.response);
+      }
       return;
     }
     if (pending) {
@@ -217,6 +353,7 @@ function AuthenticatedVoiceCompanion() {
 
   async function transcribe(blob: Blob) {
     if (cancelledRef.current) return;
+    const lifecycle = lifecycleRef.current;
     setPhase("PROCESSING");
     const controller = new AbortController(); requestRef.current = controller;
     try {
@@ -224,6 +361,7 @@ function AuthenticatedVoiceCompanion() {
       const response = await fetch("/api/voice/transcribe", { method: "POST", body: form, signal: controller.signal });
       if (!response.ok) throw new Error(TRANSCRIPTION_UNAVAILABLE_MESSAGE);
       const data = await response.json() as { text?: unknown };
+      if (!activeRef.current || cancelledRef.current || lifecycle !== lifecycleRef.current) return;
       if (typeof data.text !== "string") throw new Error("The transcription response was invalid.");
       setPhase("IDLE"); await interpret(data.text, "VOICE");
     } catch (caught) { if ((caught as Error).name !== "AbortError") setError(errorMessage(caught)); setPhase("IDLE"); }
@@ -231,10 +369,18 @@ function AuthenticatedVoiceCompanion() {
   }
 
   async function startListening() {
+    if (!activeRef.current || listeningStartRef.current || recorderRef.current?.state === "recording") return;
+    listeningStartRef.current = true;
+    const lifecycle = lifecycleRef.current;
+    autoListenRef.current = true;
     setError(null); setSuccess(null); setNothingCaptured(false); stopSpeaking(); cancelledRef.current = false;
-    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") { setError("Microphone recording is unavailable. Use the text and touch controls."); return; }
+    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") { listeningStartRef.current = false; setError("Microphone recording is unavailable. Use the text and touch controls."); return; }
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      if (!activeRef.current || cancelledRef.current || lifecycle !== lifecycleRef.current) {
+        stream.getTracks().forEach((track) => track.stop());
+        return;
+      }
       streamRef.current = stream; chunksRef.current = [];
       const recorder = new MediaRecorder(stream, MediaRecorder.isTypeSupported("audio/webm;codecs=opus") ? { mimeType: "audio/webm;codecs=opus" } : undefined);
       recorderRef.current = recorder;
@@ -250,11 +396,13 @@ function AuthenticatedVoiceCompanion() {
         : name === "NotFoundError" || name === "OverconstrainedError"
           ? "No microphone was found. Connect one, or use the text and touch controls."
           : MICROPHONE_UNAVAILABLE_MESSAGE);
-    }
+    } finally { listeningStartRef.current = false; }
   }
 
   function stopListening() { if (recorderRef.current?.state === "recording") recorderRef.current.stop(); }
   function cancelAll() {
+    autoListenRef.current = false;
+    lifecycleRef.current += 1;
     cancelledRef.current = true;
     requestRef.current?.abort();
     if (recorderRef.current?.state === "recording") recorderRef.current.stop();
@@ -264,6 +412,11 @@ function AuthenticatedVoiceCompanion() {
     setSelectionReport(null);
     setPhase("IDLE");
   }
+
+  useEffect(() => {
+    listenRef.current = startListening;
+    cancelRef.current = cancelAll;
+  });
 
   function chooseDose(id: string) {
     const dose = relevant.find((candidate) => candidate.id === id);
@@ -275,24 +428,29 @@ function AuthenticatedVoiceCompanion() {
 
   return (
     <div className="flex flex-1 flex-col gap-4">
-      {due[0] && (
-        <section className="pd-card border-pd-accent/25 p-4 text-pd-text" aria-label="Scheduled medication conversation">
-          <div className="flex items-start justify-between gap-3">
-            <div><p className="text-[0.65rem] font-bold uppercase tracking-[0.16em] text-pd-accent-soft">Due now · persisted session</p><h2 className="mt-1 text-base font-semibold">{due[0].medicationName}</h2><p className="mt-1 text-xs leading-5 text-pd-muted">{due[0].instructions || "Follow caregiver-approved instructions"} · Slot {due[0].slot}</p></div>
-            <span className="rounded-full bg-pd-accent/15 px-2.5 py-1 text-[0.65rem] font-semibold text-pd-accent-soft">{interaction?.state.replaceAll("_", " ").toLowerCase() ?? "not started"}</span>
-          </div>
-          <button type="button" onClick={() => void startScheduledConversation()} disabled={phase !== "IDLE"} className="pd-focus pd-press mt-3 min-h-11 w-full rounded-full bg-gradient-to-br from-pd-accent to-pd-accent-2 px-4 text-sm font-semibold text-white disabled:opacity-50">
-            {interaction ? "Continue scheduled conversation" : "Start scheduled conversation"}
-          </button>
-          {interaction && (
-            <div className="mt-3 space-y-2 border-t border-pd-line pt-3">
-              <label className="flex items-start gap-2 text-xs leading-5 text-pd-muted"><input type="checkbox" checked={interaction.cameraConsent} onChange={(event) => void setCameraConsent({ occurrenceId: due[0].id, consent: event.target.checked })} className="mt-1 accent-violet-500" /><span>I consent to a local, session-scoped camera observation. A gesture does not prove ingestion.</span></label>
-              <div className="grid grid-cols-2 gap-2">
-                <Link href="/hardware-lab" className="pd-focus flex min-h-10 items-center justify-center rounded-full border border-pd-line px-3 text-center text-xs font-semibold text-pd-text">Operator Hardware Lab</Link>
-                <button type="button" onClick={() => { setPending({ kind: "REPORT", occurrenceId: due[0].id, medicationName: due[0].medicationName, report: "TAKEN" }); void speak(`Confirm recording ${due[0].medicationName} as taken. This is a patient report, separate from camera and motor evidence.`); }} className="pd-focus min-h-10 rounded-full border border-pd-ok/35 px-3 text-xs font-semibold text-pd-ok">I took my medication</button>
-              </div>
-            </div>
+      {scheduledDose && conversation.length === 0 && phase === "IDLE" && !startRequest && <button type="button" onClick={() => void startScheduledConversation()} className="pd-focus min-h-11 rounded-full bg-pd-accent px-4 text-sm font-semibold text-white">Talk about {scheduledDose.medicationName}</button>}
+      {(hardwareStage || interaction?.hardware) && (
+        <section className="pd-card border-pd-accent/25 p-4 text-pd-text" aria-live="polite" aria-label="Voice hardware status">
+          <p className="text-[0.65rem] font-bold uppercase tracking-[0.16em] text-pd-accent-soft">Dispenser</p>
+          <h2 className="mt-1 text-base font-semibold">{
+            hardwareStage === "PREPARING" ? "Preparing dispenser"
+              : hardwareStage === "MOVING" || interaction?.state === "MOVEMENT_IN_PROGRESS" ? "Physical movement in progress"
+                : hardwareStage === "COMPLETED" || interaction?.hardware?.status === "COMPLETED" ? "Motor sequence completed"
+                  : hardwareStage === "UNKNOWN" || interaction?.hardware?.status === "UNKNOWN" ? "Hardware outcome uncertain"
+                    : "Hardware action blocked"
+          }</h2>
+          <p className="mt-1 text-xs leading-5 text-pd-muted">Motor status only. Medication taken is reported separately.</p>
+          {interaction?.hardware?.status === "DISPATCHED" && (
+            <button type="button" onClick={() => void reconcilePersistedHardware()} className="pd-focus mt-3 min-h-10 w-full rounded-full border border-pd-line px-3 text-xs font-semibold text-pd-text">
+              {gateway.connected ? "Get existing result (read-only)" : "Reconnect and reconcile (read-only)"}
+            </button>
           )}
+        </section>
+      )}
+      {interaction?.state === "CAMERA_OBSERVATION_PENDING" && interaction.cameraConsent && (
+        <section className="pd-card border-pd-accent/25 p-3 text-pd-text">
+          <p className="mb-3 text-xs leading-5 text-pd-muted">Optional consented local observation is available now that the motor sequence has completed. A gesture does not prove ingestion.</p>
+          <VisionObservationPanel />
         </section>
       )}
       <VoiceView
@@ -301,7 +459,7 @@ function AuthenticatedVoiceCompanion() {
       caption={caption}
       transcript={transcript}
       conversation={conversation}
-      medicationName={due[0]?.medicationName ?? relevant[0]?.medicationName}
+      medicationName={scheduledDose?.medicationName ?? relevant[0]?.medicationName}
       textInput={textInput}
       pending={pending}
       doseChoices={selectionReport && relevant.length > 1 ? relevant : null}
@@ -320,6 +478,11 @@ function AuthenticatedVoiceCompanion() {
       onConfirm={() => void confirmPending()}
       onCancelPending={() => { setPending(null); void speak("Cancelled. No information was changed."); }}
       />
+      {interaction && scheduledDose && <details className="text-xs text-pd-muted"><summary className="pd-focus min-h-11 cursor-pointer py-3">Reminder options</summary><div className="space-y-3 pb-3">
+        {interaction.education.available && <button type="button" onClick={() => void interpret("side effects")} disabled={phase !== "IDLE"} className="pd-focus min-h-11 rounded-full border border-pd-line px-4 text-pd-text disabled:opacity-50">Hear side-effect information</button>}
+        <label className="flex items-start gap-2 leading-5"><input type="checkbox" checked={interaction.cameraConsent} onChange={(event) => void setCameraConsent({ occurrenceId: scheduledDose.id, consent: event.target.checked })} className="mt-1 accent-violet-500" /><span>Allow optional local camera observation. A gesture does not prove ingestion.</span></label>
+        <button type="button" onClick={() => { setPending({ kind: "REPORT", occurrenceId: scheduledDose.id, medicationName: scheduledDose.medicationName, report: "TAKEN" }); void speak(`Confirm recording ${scheduledDose.medicationName} as taken.`); }} className="pd-focus min-h-11 rounded-full border border-pd-line px-4 text-pd-text">Report medication taken</button>
+      </div></details>}
     </div>
   );
 }

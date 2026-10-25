@@ -96,6 +96,7 @@ function bluetoothFixture(options: {
     },
   };
   const device: BluetoothDeviceLike = {
+    id: "permitted-pillsense-device",
     name: PILLSENSE_BLE.deviceName,
     gatt,
     addEventListener: (_type, listener) => {
@@ -111,6 +112,10 @@ function bluetoothFixture(options: {
       trace.push("requestDevice");
       requestOptions = requested;
       return device;
+    },
+    getDevices: async () => {
+      trace.push("getDevices");
+      return [device];
     },
   };
   return {
@@ -128,6 +133,16 @@ function bluetoothFixture(options: {
 }
 
 describe("WebBluetoothDispenserStatusTransport", () => {
+  it("preserves a live GATT connection when the chooser returns the same device", async () => {
+    const fixture = bluetoothFixture({ response: "READY" });
+    const transport = new WebBluetoothDispenserStatusTransport({ bluetooth: fixture.bluetooth, delay: async () => undefined });
+    await transport.connect();
+    await transport.connect();
+    expect(fixture.trace.filter((entry) => entry === "gatt.connect")).toHaveLength(1);
+    expect(transport.isConnected()).toBe(true);
+    expect((await transport.getStatus()).response).toBe("READY");
+  });
+
   it("requests the verified PillSense service and discovers only status-path characteristics", async () => {
     const fixture = bluetoothFixture();
     const transport = new WebBluetoothDispenserStatusTransport({
@@ -210,6 +225,41 @@ describe("WebBluetoothDispenserStatusTransport", () => {
     expect(transport.isConnected()).toBe(false);
     expect(listener).toHaveBeenLastCalledWith(false);
     await expect(transport.getStatus()).rejects.toThrow("Connect to the PillSense Arduino");
+  });
+
+  it("restores only the previously authorized device without opening the chooser", async () => {
+    const fixture = bluetoothFixture({ response: "READY" });
+    const first = new WebBluetoothDispenserStatusTransport({
+      bluetooth: fixture.bluetooth,
+      delay: async () => undefined,
+    });
+    await first.connect();
+    fixture.disconnect();
+
+    const restored = new WebBluetoothDispenserStatusTransport({
+      bluetooth: fixture.bluetooth,
+      delay: async () => undefined,
+    });
+    await restored.reconnectPreviouslyAuthorizedDevice("permitted-pillsense-device");
+    const reading = await restored.getStatus();
+
+    expect(reading.response).toBe("READY");
+    expect(fixture.trace.filter((entry) => entry === "requestDevice")).toHaveLength(1);
+    expect(fixture.trace).toContain("getDevices");
+    expect(fixture.getWrites()).toEqual(["GET_STATUS"]);
+  });
+
+  it("fails closed when the armed device identity is not among permitted devices", async () => {
+    const fixture = bluetoothFixture();
+    const transport = new WebBluetoothDispenserStatusTransport({
+      bluetooth: fixture.bluetooth,
+      delay: async () => undefined,
+    });
+
+    await expect(transport.reconnectPreviouslyAuthorizedDevice("different-device"))
+      .rejects.toThrow("no longer authorized");
+    expect(fixture.trace).not.toContain("requestDevice");
+    expect(fixture.getWrites()).toEqual([]);
   });
 
   it("sends one Slot 6 MOVE and reconciles DONE with GET_LAST_RESULT", async () => {

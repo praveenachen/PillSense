@@ -66,30 +66,78 @@ async function ensureTeam(ctx: MutationCtx) {
   return { caregiver, patient, device };
 }
 
+type SeedSpec = {
+  key: string; name: string; instructions: string; slot: number; localTime: string; count: number;
+  /** Explicitly synthetic package label. Omitted for plain supplements, which carry no package details. */
+  label?: { brand: string; ingredient: string; strength: string; dosageForm: string; quantity: string };
+};
+
+const ADVIL: SeedSpec = {
+  key: "h6c-advil", name: "Ibuprofen", instructions: "1 tablet · Follow the caregiver-approved package instructions",
+  slot: 2, localTime: "09:00", count: 12,
+  label: { brand: "Advil", ingredient: "ibuprofen", strength: "200 mg", dosageForm: "tablet", quantity: "24 tablets" },
+};
+
+const IRON_PILLS: SeedSpec = {
+  key: "h6c-iron-pills", name: "Iron Pills", instructions: "1 tablet · Eat with breakfast",
+  slot: 6, localTime: "08:00", count: 12,
+};
+
+/** Final CalHacks configuration. Slots 4 and 7 stay empty: Slot 4 is filled live by the camera scan. */
+export const DEMO_BASELINE: SeedSpec[] = [
+  { key: "h6c-vitamin-d", name: "Vitamin D", instructions: "1 tablet · Eat with breakfast", slot: 1, localTime: "08:00", count: 28 },
+  ADVIL,
+  { key: "h6c-omega-3", name: "Omega-3", instructions: "1 capsule · Eat with lunch", slot: 3, localTime: "13:00", count: 17 },
+  { key: "h6c-magnesium", name: "Magnesium", instructions: "1 tablet · Eat with dinner", slot: 5, localTime: "20:00", count: 3 },
+  IRON_PILLS,
+];
+const RESERVED_EMPTY_SLOTS = [4, 7];
+/** Earlier synthetic fixtures that the final configuration no longer includes. Only keyed rows are ever retired. */
+const OBSOLETE_SYNTHETIC_KEYS = new Set(["h6c-tylenol"]);
+
+type SlotConflict = { slot: number; assignmentId: Id<"compartmentAssignments">; medicationName: string; scannedOrUserEntered: boolean };
+
+/** Created by a person or the camera scanner rather than by this CLI's synthetic fixtures. */
+function isUserOrScanned(medication: Doc<"medications">) {
+  return !medication.demoSeedKey;
+}
+
 async function seedMedication(
   ctx: MutationCtx,
   team: Awaited<ReturnType<typeof ensureTeam>>,
-  spec: { key: string; name: string; ingredient: string; strength: string; slot: number; localTime: string; count: number },
-) {
+  spec: SeedSpec,
+  onConflict: "throw" | "report" = "throw",
+): Promise<{ medication: Doc<"medications">; schedule: Doc<"medicationSchedules">; assignment: Doc<"compartmentAssignments"> } | { conflict: SlotConflict }> {
   const now = Date.now();
   const medications = await ctx.db.query("medications")
-    .withIndex("by_patient", (q) => q.eq("patientId", team.patient._id)).take(50);
-  let medication: Doc<"medications"> | null | undefined = medications.find((row) => row.demoSeedKey === spec.key);
+    .withIndex("by_patient", (q) => q.eq("patientId", team.patient._id)).take(100);
+  // Adopt an existing plain supplement of the same name (older showcase data) instead of creating a duplicate.
+  // Scanned medications carry productDetails and are never adopted.
+  let medication: Doc<"medications"> | null | undefined = medications.find((row) => row.demoSeedKey === spec.key)
+    ?? medications.find((row) => row.active && !row.demoSeedKey && !row.productDetails && row.name.toLocaleLowerCase() === spec.name.toLocaleLowerCase());
+  const productDetails = spec.label ? {
+    brand: spec.label.brand, activeIngredient: spec.label.ingredient, strength: spec.label.strength,
+    dosageForm: spec.label.dosageForm, quantity: spec.label.quantity, otherVisibleDetails: ["SYNTHETIC DEMO LABEL"],
+  } : undefined;
   if (!medication) {
     const id = await ctx.db.insert("medications", {
-      patientId: team.patient._id, name: spec.name,
-      instructions: "1 tablet · Follow the caregiver-approved package instructions",
-      productDetails: {
-        brand: spec.name.split(" ")[0], activeIngredient: spec.ingredient,
-        strength: spec.strength, dosageForm: "tablet", quantity: "24 tablets",
-        otherVisibleDetails: ["SYNTHETIC DEMO LABEL"],
-      },
+      patientId: team.patient._id, name: spec.name, instructions: spec.instructions, productDetails,
       active: true, createdBy: team.caregiver._id, demoSeedKey: spec.key, createdAt: now,
     });
     medication = await ctx.db.get("medications", id);
-  } else if (!medication.active) {
-    await ctx.db.patch("medications", medication._id, { active: true });
-    medication = { ...medication, active: true };
+  } else {
+    const patch: Partial<Doc<"medications">> = {};
+    if (!medication.demoSeedKey) patch.demoSeedKey = spec.key;
+    if (!medication.active) patch.active = true;
+    // Synthetic fixtures are corrected in place; adopted supplements keep whatever the caregiver already has.
+    if (medication.demoSeedKey === spec.key && spec.label) {
+      if (medication.name !== spec.name) patch.name = spec.name;
+      if (JSON.stringify(medication.productDetails) !== JSON.stringify(productDetails)) patch.productDetails = productDetails;
+    }
+    if (Object.keys(patch).length > 0) {
+      await ctx.db.patch("medications", medication._id, patch);
+      medication = { ...medication, ...patch };
+    }
   }
   if (!medication) throw new ConvexError("Unable to seed medication");
   let schedule = await ctx.db.query("medicationSchedules")
@@ -106,30 +154,75 @@ async function seedMedication(
     schedule = await ctx.db.get("medicationSchedules", schedule._id);
   }
   const assignments = await ctx.db.query("compartmentAssignments")
-    .withIndex("by_patient", (q) => q.eq("patientId", team.patient._id)).take(20);
-  let assignment: Doc<"compartmentAssignments"> | null | undefined = assignments.find((row) => row.medicationId === medication!._id);
-  const slotConflict = assignments.find((row) => row.active && row.slot === spec.slot && row.medicationId !== medication!._id);
-  const freeSlot = [spec.slot, 1, 2, 3, 4, 5, 6, 7].find((slot) => !assignments.some((row) => row.active && row.slot === slot));
-  const slot = slotConflict ? freeSlot : spec.slot;
-  if (slot === undefined) throw new ConvexError("No synthetic demo slot is available");
+    .withIndex("by_patient", (q) => q.eq("patientId", team.patient._id)).take(100);
+  let assignment: Doc<"compartmentAssignments"> | null | undefined = assignments.find((row) => row.medicationId === medication!._id && row.active)
+    ?? assignments.find((row) => row.medicationId === medication!._id);
+  const occupant = assignments.find((row) => row.active && row.slot === spec.slot && row.medicationId !== medication!._id);
+  if (occupant) {
+    // Never relocate a fixture into another slot: the final layout is fixed, and the occupant is not ours to move.
+    const occupantMedication = await ctx.db.get("medications", occupant.medicationId);
+    const conflict: SlotConflict = {
+      slot: spec.slot, assignmentId: occupant._id, medicationName: occupantMedication?.name ?? "Unknown",
+      scannedOrUserEntered: occupantMedication ? isUserOrScanned(occupantMedication) : true,
+    };
+    if (onConflict === "report") return { conflict };
+    throw new ConvexError(`Slot ${spec.slot} is occupied by "${conflict.medicationName}". Run npm run demo:prepare-final to review it.`);
+  }
   if (!assignment) {
     const id = await ctx.db.insert("compartmentAssignments", {
       deviceId: team.device._id, patientId: team.patient._id, medicationId: medication._id,
-      slot, demoInventory: 1, estimatedSupplyCount: spec.count,
+      slot: spec.slot, demoInventory: 1, estimatedSupplyCount: spec.count,
       supplyEstimateSource: "SYNTHETIC_DEMO", supplyEstimateUpdatedAt: now, supplyRevision: 1,
       active: true, assignedBy: team.caregiver._id, createdAt: now,
     });
     assignment = await ctx.db.get("compartmentAssignments", id);
-  } else {
+  } else if (!assignment.active || assignment.slot !== spec.slot) {
     await ctx.db.patch("compartmentAssignments", assignment._id, {
-      slot, demoInventory: 1, estimatedSupplyCount: spec.count,
+      slot: spec.slot, demoInventory: 1, estimatedSupplyCount: spec.count,
       supplyEstimateSource: "SYNTHETIC_DEMO", supplyEstimateUpdatedAt: now,
       supplyRevision: (assignment.supplyRevision ?? 0) + 1, active: true,
     });
     assignment = await ctx.db.get("compartmentAssignments", assignment._id);
   }
+  // An already-correct assignment is left alone, so repeated seeding never resets a caregiver-adjusted supply.
   if (!schedule || !assignment) throw new ConvexError("Unable to seed medication schedule and assignment");
   return { medication, schedule, assignment };
+}
+
+async function deactivateMedication(ctx: MutationCtx, medication: Doc<"medications">) {
+  await ctx.db.patch("medications", medication._id, { active: false });
+  const schedules = await ctx.db.query("medicationSchedules").withIndex("by_medication", (q) => q.eq("medicationId", medication._id)).take(10);
+  for (const schedule of schedules) if (schedule.active) await ctx.db.patch("medicationSchedules", schedule._id, { active: false });
+  const assignments = await ctx.db.query("compartmentAssignments").withIndex("by_medication", (q) => q.eq("medicationId", medication._id)).take(10);
+  for (const assignment of assignments) if (assignment.active) await ctx.db.patch("compartmentAssignments", assignment._id, { active: false });
+}
+
+/** Deactivates obsolete synthetic fixtures (keyed rows only). History rows are kept. */
+async function retireObsoleteFixtures(ctx: MutationCtx, patientId: Id<"appUsers">) {
+  const medications = await ctx.db.query("medications").withIndex("by_patient", (q) => q.eq("patientId", patientId)).take(100);
+  const retired: string[] = [];
+  for (const medication of medications) {
+    if (!medication.demoSeedKey || !OBSOLETE_SYNTHETIC_KEYS.has(medication.demoSeedKey) || !medication.active) continue;
+    await deactivateMedication(ctx, medication);
+    retired.push(medication.demoSeedKey);
+  }
+  return retired;
+}
+
+async function seedBaseline(ctx: MutationCtx, team: Awaited<ReturnType<typeof ensureTeam>>) {
+  const retired = await retireObsoleteFixtures(ctx, team.patient._id);
+  const conflicts: SlotConflict[] = [];
+  for (const spec of DEMO_BASELINE) {
+    const result = await seedMedication(ctx, team, spec, "report");
+    if ("conflict" in result) conflicts.push(result.conflict);
+  }
+  return { retired, conflicts };
+}
+
+async function seedRequired(ctx: MutationCtx, team: Awaited<ReturnType<typeof ensureTeam>>, spec: SeedSpec) {
+  const result = await seedMedication(ctx, team, spec, "throw");
+  if ("conflict" in result) throw new ConvexError("Demo slot is occupied");
+  return result;
 }
 
 async function archiveActiveScenarios(ctx: MutationCtx, patientId: Id<"appUsers">, now: number) {
@@ -181,10 +274,10 @@ async function createDoseScenario(
   team: Awaited<ReturnType<typeof ensureTeam>>,
   scenario: "DUE_REMINDER" | "UNANSWERED_ROUTINE",
 ) {
-  const seeded = await seedMedication(ctx, team, {
-    key: "h6c-advil", name: "Advil 200 mg", ingredient: "ibuprofen", strength: "200 mg",
-    slot: 6, localTime: "09:00", count: 12,
-  });
+  // The successful-dose path is the only scenario that can enter the verified
+  // voice-to-hardware flow, so it must target the fixed Slot 6 fixture. Missed
+  // dose remains the non-hardware Ibuprofen care-escalation demonstration.
+  const seeded = await seedRequired(ctx, team, scenario === "DUE_REMINDER" ? IRON_PILLS : ADVIL);
   const now = Date.now();
   const runId = `${CLI_SOURCE}:${scenario.toLocaleLowerCase()}:${crypto.randomUUID()}`;
   const runDocId = await ctx.db.insert("demoScenarioRuns", {
@@ -202,26 +295,124 @@ async function createDoseScenario(
   const occurrence = await ctx.db.get("doseOccurrences", occurrenceId);
   if (!occurrence) throw new ConvexError("Unable to create synthetic dose occurrence");
   await reconcileOccurrence(ctx, occurrence, now, "DEMO_SIMULATION", { upcomingWindowMinutes: 60, followUpWindowMinutes: 5 });
-  return { runId, occurrenceId };
+  return {
+    runId,
+    occurrenceId,
+    medication: seeded.medication.name,
+    slot: seeded.assignment.slot,
+  };
 }
 
 export const seed = mutation({
   args: {},
   handler: async (ctx) => {
     const team = await ensureTeam(ctx);
-    const first = await seedMedication(ctx, team, {
-      key: "h6c-advil", name: "Advil 200 mg", ingredient: "ibuprofen", strength: "200 mg",
-      slot: 6, localTime: "09:00", count: 12,
-    });
-    await seedMedication(ctx, team, {
-      key: "h6c-vitamin-d", name: "Vitamin D", ingredient: "vitamin D3", strength: "1000 IU",
-      slot: 1, localTime: "08:00", count: 28,
-    });
+    const { retired, conflicts } = await seedBaseline(ctx, team);
     const settings = await ctx.db.query("reminderSettings").withIndex("by_patient", (q) => q.eq("patientId", team.patient._id)).unique();
     const value = { upcomingWindowMinutes: 60, followUpWindowMinutes: 5, updatedBy: team.caregiver._id, updatedAt: Date.now() };
     if (settings) await ctx.db.patch("reminderSettings", settings._id, value);
     else await ctx.db.insert("reminderSettings", { patientId: team.patient._id, ...value });
-    return { seeded: true, patientReady: true, caregiverReady: true, primarySlot: first.assignment.slot };
+    return {
+      seeded: conflicts.length === 0, patientReady: true, caregiverReady: true, primarySlot: ADVIL.slot,
+      retiredObsoleteFixtures: retired,
+      // Occupied slots are reported, never overwritten. Resolve them with npm run demo:prepare-final.
+      slotConflicts: conflicts.map((row) => ({ slot: row.slot, medication: row.medicationName, scannedOrUserEntered: row.scannedOrUserEntered })),
+    };
+  },
+});
+
+/** Read-only lookup of the configured operator's synthetic team. Returns null instead of creating anything. */
+async function findSyntheticTeam(ctx: QueryCtx) {
+  const identity = await requireCli(ctx);
+  const caregiver = await ctx.db.query("appUsers").withIndex("by_tokenIdentifier", (q) => q.eq("tokenIdentifier", identity.tokenIdentifier)).unique();
+  if (!caregiver) return null;
+  const relationship = await ctx.db.query("careRelationships").withIndex("by_caregiver", (q) => q.eq("caregiverId", caregiver._id)).first();
+  const patient = relationship ? await ctx.db.get("appUsers", relationship.patientId) : null;
+  if (!patient?.isSynthetic) return null;
+  const device = await ctx.db.query("devices").withIndex("by_patient", (q) => q.eq("patientId", patient._id)).first();
+  return device ? { caregiver, patient, device } : null;
+}
+
+async function describeActiveSlot(ctx: QueryCtx, team: NonNullable<Awaited<ReturnType<typeof findSyntheticTeam>>>, slot: number) {
+  const assignments = await ctx.db.query("compartmentAssignments").withIndex("by_device_and_slot", (q) => q.eq("deviceId", team.device._id).eq("slot", slot)).take(20);
+  const assignment = assignments.find((row) => row.active && row.patientId === team.patient._id);
+  if (!assignment) return null;
+  const medication = await ctx.db.get("medications", assignment.medicationId);
+  return {
+    assignmentId: assignment._id, medicationId: assignment.medicationId,
+    medication: medication?.name ?? "Unknown", synthetic: !!medication?.demoSeedKey,
+    scannedOrUserEntered: medication ? isUserOrScanned(medication) : true,
+    activeIngredient: medication?.productDetails?.activeIngredient ?? null,
+    strength: medication?.productDetails?.strength ?? null,
+    estimatedSupplyCount: assignment.estimatedSupplyCount ?? null,
+  };
+}
+
+const releasableSlot = v.number();
+
+/** Step 1 of releasing a slot: shows exactly what would be deactivated. Read-only. */
+export const describeSlot = query({
+  args: { slot: releasableSlot },
+  handler: async (ctx, args) => {
+    const team = await findSyntheticTeam(ctx);
+    if (!team) throw new ConvexError("Demo CLI refuses to operate without a synthetic patient and dispenser");
+    if (!Number.isInteger(args.slot) || args.slot < 1 || args.slot > 7) throw new ConvexError("Slot must be 1 through 7");
+    return { slot: args.slot, assignment: await describeActiveSlot(ctx, team, args.slot) };
+  },
+});
+
+/**
+ * Step 2: deactivates one slot's active assignment on the synthetic dispenser only. The medication, schedule, and
+ * every historical row are kept (set inactive, never deleted). No device command, motor, or inventory write happens.
+ */
+export const releaseSlot = mutation({
+  args: { slot: v.number(), assignmentId: v.id("compartmentAssignments"), confirm: v.string() },
+  handler: async (ctx, args) => {
+    const team = await findSyntheticTeam(ctx);
+    if (!team) throw new ConvexError("Demo CLI refuses to operate without a synthetic patient and dispenser");
+    if (!Number.isInteger(args.slot) || args.slot < 1 || args.slot > 7) throw new ConvexError("Slot must be 1 through 7");
+    if (args.confirm !== `RELEASE SLOT ${args.slot}`) throw new ConvexError(`Confirmation must be exactly "RELEASE SLOT ${args.slot}"`);
+    const assignment = await ctx.db.get("compartmentAssignments", args.assignmentId);
+    if (!assignment || !assignment.active || assignment.slot !== args.slot ||
+        assignment.patientId !== team.patient._id || assignment.deviceId !== team.device._id) {
+      throw new ConvexError("That assignment is not the active synthetic assignment for this slot; nothing was changed");
+    }
+    const commands = await ctx.db.query("dispenseCommands").withIndex("by_patient", (q) => q.eq("patientId", team.patient._id)).order("desc").take(50);
+    if (commands.some((row) => row.assignmentId === assignment._id && row.status !== "COMPLETED")) {
+      throw new ConvexError("A dispense for this slot is not settled; resolve it in the Hardware Lab before releasing the slot");
+    }
+    const medication = await ctx.db.get("medications", assignment.medicationId);
+    await ctx.db.patch("compartmentAssignments", assignment._id, { active: false });
+    if (medication) {
+      const others = await ctx.db.query("compartmentAssignments").withIndex("by_medication", (q) => q.eq("medicationId", medication._id)).take(10);
+      if (!others.some((row) => row.active && row._id !== assignment._id)) await deactivateMedication(ctx, medication);
+    }
+    return { released: true, slot: args.slot, medication: medication?.name ?? null, historyPreserved: true, deviceCommandIssued: false };
+  },
+});
+
+/** Compares the synthetic dispenser with the final CalHacks layout. Read-only. */
+export const finalStatus = query({
+  args: {},
+  handler: async (ctx) => {
+    const team = await findSyntheticTeam(ctx);
+    if (!team) return { ready: false, reason: "No synthetic patient and dispenser yet. Run npm run demo:seed." };
+    const slots: Record<string, string | null> = {};
+    for (let slot = 1; slot <= 7; slot += 1) slots[String(slot)] = (await describeActiveSlot(ctx, team, slot))?.medication ?? null;
+    const medications = await ctx.db.query("medications").withIndex("by_patient", (q) => q.eq("patientId", team.patient._id)).take(100);
+    const activeNames = medications.filter((row) => row.active).map((row) => row.name.toLocaleLowerCase());
+    const mismatches = [
+      ...DEMO_BASELINE.filter((spec) => slots[String(spec.slot)]?.toLocaleLowerCase() !== spec.name.toLocaleLowerCase())
+        .map((spec) => ({ slot: spec.slot, expected: spec.name, actual: slots[String(spec.slot)] })),
+      ...RESERVED_EMPTY_SLOTS.filter((slot) => slots[String(slot)] !== null)
+        .map((slot) => ({ slot, expected: null, actual: slots[String(slot)] })),
+    ];
+    return {
+      ready: mismatches.length === 0,
+      slots,
+      mismatches,
+      duplicateActiveNames: activeNames.filter((name, index) => activeNames.indexOf(name) !== index),
+    };
   },
 });
 
@@ -256,12 +447,16 @@ export const prepareScenario = mutation({
     }
     if (args.scenario === "successful-dose" || args.scenario === "missed-dose") {
       const dose = await createDoseScenario(ctx, team, args.scenario === "successful-dose" ? "DUE_REMINDER" : "UNANSWERED_ROUTINE");
-      return { scenario: args.scenario, ready: true, runId: dose.runId, occurrenceId: dose.occurrenceId };
+      return {
+        scenario: args.scenario,
+        ready: true,
+        runId: dose.runId,
+        occurrenceId: dose.occurrenceId,
+        medication: dose.medication,
+        slot: dose.slot,
+      };
     }
-    const seeded = await seedMedication(ctx, team, {
-      key: "h6c-advil", name: "Advil 200 mg", ingredient: "ibuprofen", strength: "200 mg",
-      slot: 6, localTime: "09:00", count: 12,
-    });
+    const seeded = await seedRequired(ctx, team, ADVIL);
     const prior = seeded.assignment;
     const demoRunId = await ctx.db.insert("refillDemoRuns", {
       patientId: team.patient._id, assignmentId: prior._id,

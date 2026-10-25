@@ -13,6 +13,9 @@
     "demo:reset": "node scripts/demo-cli.mjs reset",
     "demo:scenario": "node scripts/demo-cli.mjs scenario",
     "demo:status": "node scripts/demo-cli.mjs status",
+    "demo:final-status": "node scripts/demo-cli.mjs final-status",
+    "demo:release-slot": "node scripts/demo-cli.mjs release-slot",
+    "demo:prepare-final": "node scripts/demo-cli.mjs prepare-final",
     "demo:advance-missed-dose": "node scripts/demo-cli.mjs advance-missed-dose"
   },
   "dependencies": {

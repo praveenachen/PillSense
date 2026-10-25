@@ -22,24 +22,34 @@ The current API references are:
 
 `CARTESIA_API_KEY` is read only inside Next.js route handlers. Every voice endpoint calls Clerk `auth()` and returns HTTP 401 without an authenticated session. The browser never receives the key or a long-lived Cartesia credential. Audio and speech responses use `no-store` semantics.
 
-The Voice Companion supports exactly three deterministic intents:
+The Voice Companion supports deterministic, server-validated intents:
 
-1. `SCHEDULED_DOSE_ASSISTANCE` reads current authenticated occurrence state and points to visible mock controls. It never dispatches a command or calls Bluetooth.
+1. `SCHEDULED_DOSE_ASSISTANCE` reads current authenticated occurrence state. A structured voice readiness response can dispatch the fixed Slot 6 Arduino demo only when the current browser BLE connection was explicitly armed in Hardware Lab first.
 2. `REPORT_TAKEN_OR_NOT_TAKEN` accepts only explicit language, selects one actual occurrence, then requires a second explicit confirmation before calling the existing `dispensing.reportIngestion` mutation.
 3. `REPORT_DEVICE_PROBLEM` requires confirmation, then creates an idempotent patient-scoped issue containing the actual observed device state. It never fabricates a motor fault or retries a command.
 
 Ambiguous statements, medical questions, refill ordering, and unsupported requests cause no mutation. Claude is not called by the voice layer.
 
+### Development-only voice hardware gate
+
+Voice-to-hardware is available only when Convex is configured for development, the signed-in caregiver exactly matches the configured demo operator, the caregiver has an active relationship to the synthetic patient, and the shared Bluetooth gateway observed `READY`. The operator must complete the physical safety confirmations in dispenser settings (or Hardware Lab) and explicitly arm that exact browser connection for ten minutes before the voice interaction. The due reminder must resolve to the active Slot 6 assignment with no prior command. The main Dispenser screen uses its existing Pair / Ready / Loaded steps; Loaded reflects saved positive inventory counts, not a physical sensor.
+
+The arm is consumed before `MOVE` is written. The shared root gateway owns the only Web Bluetooth transport and the firmware one-MOVE lock. Refresh, duplicate speech, `UNKNOWN`, disconnect, rejection, and mismatched IDs never cause an automatic resend; only `GET_LAST_RESULT` reconciliation is allowed.
+
+Browser-observed outcomes are persisted with `trustedHardwareEvidence=false`. `DONE` means only that the programmed step sequence completed. It does not prove physical alignment, pill release, collection, or ingestion and does not decrement synthetic inventory. Seeded inventory counts do not gate this positioning demo or establish what is physically loaded. The operator must confirm an empty carousel or inert demo props only, with no real medications. Patient-reported `TAKEN` remains separate. If camera consent was granted, the existing local OpenCV control appears only after motor completion.
+
 ## Demo
 
-1. Sign in and open `/patient`.
-2. In **Voice Companion**, select **Start 60-second voice demo**. This creates a labeled due demo occurrence without changing its schedule.
-3. Listen to the Cartesia reminder while reading the synchronized caption.
-4. Select **Push to Talk**, allow microphone access, say “I took my medication,” and select **Stop and transcribe**. The recording also stops automatically at ten seconds.
-5. Review the transcript and interpreted action. Say “confirm” in a second Push-to-Talk session or select the visible **Confirm** button.
-6. Observe the reactive patient-report update. No mock or real motor action occurs.
+1. Use the synthetic Slot 6 due-reminder scenario on the existing development deployment.
+2. In desktop Chrome, open `/demo` → **Dispenser**, select **Pair Arduino**, and require firmware `READY` in the real Arduino card.
+3. With an empty carousel or inert props only, manually align Slot 0, clear the mechanism, then open the Dispenser gear, check all three confirmations, and select **Arm Slot 6 voice demo**. Hardware Lab's separate manual test remains empty-carousel only.
+4. On **Home**, tap the due medication reminder. This selects that exact occurrence, opens Voice, and speaks its current question without a second Start button. Synthetic demo greetings use “Hello Praveena!”; real accounts retain their patient name. Reopening resumes the persisted question and does not reset or repeat a hardware attempt.
+5. After each spoken question, the microphone opens automatically (Chrome permission is still required), records for at most ten seconds, then transcribes. Tap the recording button to submit sooner, or End to cancel. Leaving Voice stops playback and recording, releases tracks, and ignores late audio/transcription results. Say “Yes, I’m ready.” The synthetic Iron Pills demo offers MedlinePlus side-effect education before movement; answer yes to hear it, then yes to continue. Answering no to the education offer skips education and asks whether to continue. **Reminder options → Hear side-effect information** also works on an existing session without reopening a completed hardware attempt.
+6. Observe **Preparing dispenser**, **Physical movement in progress**, and then the actual correlated completion or uncertain state. No second motor click is required.
+7. If camera consent was selected, optionally start and stop the local observation shown after completion.
+8. Use **I took my medication** only as a separate patient report; motor or camera results never set ingestion.
 
-The same flow works without audio: use the text input and visible action buttons. If Cartesia or microphone access fails, captions, intent selection, confirmation, and Convex mutations remain available.
+Text and touch remain available for non-hardware features. The automatic hardware handoff specifically requires a structured `VOICE` readiness event, an active arm, and the same live BLE connection.
 
 ## Future motion wake trigger
 

@@ -224,6 +224,9 @@ export default defineSchema({
     ),
     pillRelease: v.literal("UNKNOWN"),
     pillCollection: v.literal("UNKNOWN"),
+    source: v.optional(v.union(v.literal("MOCK"), v.literal("VOICE_BLE_DEMO"))),
+    operationId: v.optional(v.string()),
+    demoArmId: v.optional(v.id("hardwareDemoArms")),
     expiresAt: v.number(),
     createdAt: v.number(),
     updatedAt: v.number(),
@@ -245,6 +248,8 @@ export default defineSchema({
       v.literal("FAULT"),
       v.literal("DISCONNECTED"),
     ),
+    source: v.optional(v.union(v.literal("MOCK"), v.literal("BROWSER_BLE_DEMO"))),
+    trustedHardwareEvidence: v.optional(v.boolean()),
     occurredAt: v.number(),
     receivedAt: v.number(),
   })
@@ -557,6 +562,30 @@ export default defineSchema({
     .index("by_runId", ["runId"])
     .index("by_patient_and_status", ["patientId", "status"]),
 
+  hardwareDemoArms: defineTable({
+    patientId: v.id("appUsers"),
+    deviceId: v.id("devices"),
+    armedBy: v.id("appUsers"),
+    expectedSlot: v.literal(6),
+    connectionId: v.string(),
+    observedStatus: v.literal("READY"),
+    manualHomeConfirmed: v.boolean(),
+    emptyOrInertConfirmed: v.boolean(),
+    movingPartsClear: v.boolean(),
+    status: v.union(
+      v.literal("ARMED"),
+      v.literal("CONSUMED"),
+      v.literal("DISARMED"),
+      v.literal("EXPIRED"),
+    ),
+    expiresAt: v.number(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+    consumedAt: v.optional(v.number()),
+  })
+    .index("by_patient_and_status", ["patientId", "status"])
+    .index("by_armed_by_and_status", ["armedBy", "status"]),
+
   medicationInteractionSessions: defineTable({
     occurrenceId: v.id("doseOccurrences"),
     patientId: v.id("appUsers"),
@@ -567,6 +596,12 @@ export default defineSchema({
       v.literal("AWAITING_EDUCATION_CHOICE"),
       v.literal("AWAITING_CONTINUE"),
       v.literal("READY_FOR_SUPERVISED_ROUTINE"),
+      v.literal("PREPARING_DISPENSER"),
+      v.literal("MOVEMENT_IN_PROGRESS"),
+      v.literal("HARDWARE_COMPLETED"),
+      v.literal("HARDWARE_UNKNOWN"),
+      v.literal("CAMERA_OBSERVATION_PENDING"),
+      v.literal("AWAITING_PATIENT_REPORT"),
       v.literal("DECLINED"),
       v.literal("COMPLETED"),
     ),
@@ -578,6 +613,8 @@ export default defineSchema({
       v.literal("FAILED"),
     ),
     cameraConsent: v.boolean(),
+    hardwareReadinessSource: v.optional(v.literal("VOICE")),
+    hardwareCommandId: v.optional(v.string()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
@@ -600,10 +637,16 @@ export default defineSchema({
       v.literal("ROUTINE_READY"),
       v.literal("SESSION_DECLINED"),
       v.literal("SESSION_COMPLETED"),
+      v.literal("HARDWARE_PREPARED"),
+      v.literal("HARDWARE_DISPATCHED"),
+      v.literal("HARDWARE_STARTED"),
+      v.literal("HARDWARE_COMPLETED"),
+      v.literal("HARDWARE_UNKNOWN"),
     ),
     intent: v.optional(
       v.union(
         v.literal("YES"),
+        v.literal("READY"),
         v.literal("NO"),
         v.literal("REPEAT"),
         v.literal("REQUEST_MORE_INFORMATION"),

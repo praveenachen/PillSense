@@ -24,6 +24,15 @@ describe("Today screen dark revamp", () => {
   const now = new Date(2026, 2, 12, 8, 48).getTime();
   const nine = new Date(2026, 2, 12, 9, 0).getTime();
 
+  it("shows an actionable scheduled reminder on Home only when a due occurrence is provided", () => {
+    const props = { greeting: "Hello", name: "Praveena", now, device, nextDose: null, timeline: [], onOpenReminder: () => undefined };
+    const due = renderToStaticMarkup(<TodayView {...props} dueReminder={{ id: "dose-6", medicationName: "Iron Pills" }} />);
+    expect(due).toContain('aria-label="Start reminder for Iron Pills"');
+    expect(due).toContain("Tap to talk with PillSense");
+    const empty = renderToStaticMarkup(<TodayView {...props} />);
+    expect(empty).not.toContain("Medication reminder");
+  });
+
   it("shows a countdown only for a real upcoming dose and highlights that slot", () => {
     const html = renderToStaticMarkup(<TodayView greeting="Good morning," name="Eleanor" now={now} device={device} nextDose={row({ at: nine, slot: 6 })} timeline={[row({ at: nine, slot: 6 })]} />);
     expect(html).toContain("in 12 min");
@@ -222,8 +231,8 @@ describe("Voice Companion dark redesign", () => {
     expect(idle).toContain('data-voice-state="idle"');
     expect(idle).not.toContain(">End<");
     expect(idle).not.toContain("No transcript yet.");
-    expect(idle).toContain("I’m listening.");
-    expect(idle).toContain("Tell me what you need, or just talk naturally.");
+    expect(idle).toContain("Tap to talk");
+    expect(idle).toContain("Start a conversation or open a medication reminder.");
     expect(idle).not.toContain("Tap the orb");
     expect(idle).not.toContain("Press once");
     expect(idle).not.toContain("Try saying");
@@ -290,6 +299,17 @@ describe("carousel graphic", () => {
 describe("My Dispenser dark redesign", () => {
   const medication = { id: "med-1", name: "Iron Supplement", instructions: "1 tablet · With water", slot: 6, localTime: "09:00" };
   const ready = presentDispenserDevice({ state: "READY", connected: true, homeAligned: true, faultCode: null });
+
+  it("uses the existing setup steps for Bluetooth and completes Loaded from saved inventory", () => {
+    const html = renderToStaticMarkup(<DispenserView medications={[{ ...medication, supplyCount: 50 }]} device={ready} selectedSlot={6} onSelectSlot={() => undefined} onOpenSetup={() => undefined} onPair={() => undefined} onVerify={() => undefined} demoSettings={<p>Operator safety settings</p>} />);
+    expect(html).toContain(">Pair<");
+    expect(html).toContain(">Ready<");
+    expect(html).toContain(">Loaded<");
+    expect(html).not.toContain("Operator safety settings");
+    const unloaded = renderToStaticMarkup(<DispenserView medications={[{ ...medication, supplyCount: 0 }]} device={ready} selectedSlot={6} onSelectSlot={() => undefined} onOpenSetup={() => undefined} onPair={() => undefined} onVerify={() => undefined} />);
+    expect(unloaded).toContain(">Load slots<");
+    expect(unloaded).not.toContain(">Loaded<");
+  });
 
   it("renders persisted assignment details and all eight selectable positions", () => {
     const html = renderToStaticMarkup(<DispenserView medications={[medication]} device={ready} selectedSlot={6} onSelectSlot={noop} onOpenSetup={noop} synthetic />);
@@ -375,19 +395,23 @@ describe("My Dispenser dark redesign", () => {
 
 describe("hardware safety boundaries survive the redesign", () => {
   const arduino = source("arduino-status-panel.tsx");
+  const gateway = source("arduino-gateway-provider.tsx");
+  const voiceHardware = source("../lib/voice/voice-hardware-demo.ts");
 
   it("keeps a single dispatch path, the one-dispatch lock and all three confirmations", () => {
-    expect(arduino.match(/runSupervisedSlot6MotorTest\(/g)).toHaveLength(1);
+    expect(gateway.match(/runSupervisedSlot6MotorTest\(/g)).toHaveLength(1);
+    expect(voiceHardware.match(/deps\.dispatch\(/g)).toHaveLength(1);
     expect(arduino).toContain("dispatchLocked.current");
     expect(arduino).toContain("I physically confirmed the carousel is empty.");
     expect(arduino).toContain("I physically aligned the device to Slot 0 before startup.");
     expect(arduino).toContain("I confirmed hands, cables, and other objects are clear of moving parts.");
-    expect(arduino).toContain("getLastMotorResult(operationId)");
+    expect(gateway).toContain("getLastMotorResult(operationId)");
     expect(arduino).toContain("Run Slot 6 Test (Supervised)");
   });
 
   it("creates exactly one Bluetooth transport and no other component creates one", () => {
-    expect(arduino.match(/new WebBluetoothDispenserStatusTransport\(/g)).toHaveLength(1);
+    expect(gateway.match(/new WebBluetoothDispenserStatusTransport\(/g)).toHaveLength(1);
+    expect(arduino).not.toMatch(/new WebBluetoothDispenserStatusTransport|navigator\.bluetooth|runSupervisedSlot6MotorTest/);
     for (const file of ["voice-companion.tsx", "voice-view.tsx", "today-screen.tsx", "today-view.tsx", "schedule-screen.tsx", "demo-care-panel.tsx", "setup-sheet.tsx", "demo-studio.tsx", "mobile-ui.tsx"]) {
       expect(source(file)).not.toMatch(/WebBluetooth|ble-protocol|runSupervised|navigator\.bluetooth/);
     }
@@ -412,11 +436,14 @@ describe("hardware safety boundaries survive the redesign", () => {
     expect(studio).not.toMatch(/activeTab === "dispenser" &&/);
   });
 
-  it("keeps camera tooling out of the patient studio and inside the internal hardware lab", () => {
+  it("offers the real camera only after consented hardware completion", () => {
     const studio = source("demo-studio.tsx");
     const lab = source("persistent-arduino-lab.tsx");
+    const voice = source("voice-companion.tsx");
     expect(studio).not.toContain("<VisionObservationPanel");
     expect(lab.match(/<VisionObservationPanel/g)).toHaveLength(1);
+    expect(voice.match(/<VisionObservationPanel/g)).toHaveLength(1);
+    expect(voice).toContain('interaction?.state === "CAMERA_OBSERVATION_PENDING" && interaction.cameraConsent');
     expect(lab).toContain("Hardware Lab");
     expect(studio).toMatch(/panel\.id === "today"[\s\S]{0,400}<TodayScreen[\s\S]{0,200}: <ConfigurationRequired/);
   });
@@ -427,5 +454,20 @@ describe("hardware safety boundaries survive the redesign", () => {
     expect(`${screen}\n${view}`).not.toMatch(/WebBluetooth|navigator\.bluetooth|runSupervised|MOVE,/);
     expect(view).toContain("Slots");
     expect(view).not.toContain("View All Slots");
+  });
+
+  it("places the operator-only Arduino pairing on My Dispenser without another transport or MOVE action", () => {
+    const screen = source("dispenser-screen.tsx");
+    const view = source("dispenser-view.tsx");
+    const card = source("dispenser-bluetooth-card.tsx");
+    expect(screen).toContain("<DispenserBluetoothCard />");
+    expect(view).toContain("{demoSettings}");
+    expect(view).toContain('label="Dispenser settings"');
+    expect(card).toContain("useArduinoGateway()");
+    expect(screen).toContain("gateway.connect()");
+    expect(screen).toContain("gateway.getStatus()");
+    expect(card).toContain('arm.status === "UNAVAILABLE"');
+    expect(card).not.toMatch(/new WebBluetoothDispenserStatusTransport|navigator\.bluetooth|dispatchSlot6|MOVE,/);
+    expect(arduino).toContain('"Armed · disconnected"');
   });
 });

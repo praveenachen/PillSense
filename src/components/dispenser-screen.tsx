@@ -6,6 +6,8 @@ import { use, useEffect, useRef, useState, type ReactNode } from "react";
 import { api } from "../../convex/_generated/api";
 import { AuthRequired } from "./auth-required";
 import { DispenserView, presentDispenserDevice } from "./dispenser-view";
+import { DispenserBluetoothCard } from "./dispenser-bluetooth-card";
+import { useArduinoGateway } from "./arduino-gateway-provider";
 import type { SlotMedicationInput } from "./slot-medication-form";
 
 export function DispenserScreen({ onOpenSetup }: { onOpenSetup: () => void }) {
@@ -19,6 +21,26 @@ export function DispenserScreen({ onOpenSetup }: { onOpenSetup: () => void }) {
   const ensureShowcase = useMutation(api.demo.ensureDashboardShowcase);
   const showcaseRequested = useRef(false);
   const [selectedSlot, setSelectedSlot] = useState<number | null>(null);
+  const gateway = useArduinoGateway();
+  const [bluetoothBusy, setBluetoothBusy] = useState(false);
+  const bluetoothBusyRef = useRef(false);
+  const [bluetoothError, setBluetoothError] = useState<string | null>(null);
+
+  async function bluetoothAction(action: "pair" | "verify") {
+    if (bluetoothBusyRef.current) return;
+    bluetoothBusyRef.current = true;
+    setBluetoothBusy(true);
+    setBluetoothError(null);
+    try {
+      if (action === "pair") await gateway.connect();
+      else await gateway.getStatus();
+    } catch (error) {
+      setBluetoothError(error instanceof Error ? error.message : "Bluetooth connection failed.");
+    } finally {
+      bluetoothBusyRef.current = false;
+      setBluetoothBusy(false);
+    }
+  }
 
   // Idempotent: fills in demo pill counts for synthetic patients even if Today was not opened first.
   useEffect(() => {
@@ -43,11 +65,21 @@ export function DispenserScreen({ onOpenSetup }: { onOpenSetup: () => void }) {
   return (
     <DispenserView
       medications={dashboard.medications}
-      device={presentDispenserDevice(doses.device)}
+      device={dashboard.isSynthetic ? {
+        connected: gateway.connected && gateway.isConnected(),
+        verified: gateway.connected && gateway.isConnected() && gateway.reportedStatus === "READY",
+        busy: gateway.reportedStatus === "DISPENSING",
+        tone: gateway.connected && gateway.isConnected() ? "ready" : "idle",
+      } : presentDispenserDevice(doses.device)}
       selectedSlot={selectedSlot ?? dashboard.medications[0]?.slot ?? 1}
       onSelectSlot={setSelectedSlot}
       onOpenSetup={onOpenSetup}
       synthetic={dashboard.isSynthetic}
+      demoSettings={dashboard.isSynthetic ? <DispenserBluetoothCard /> : undefined}
+      onPair={dashboard.isSynthetic ? () => void bluetoothAction("pair") : undefined}
+      onVerify={dashboard.isSynthetic ? () => void bluetoothAction("verify") : undefined}
+      setupBusy={bluetoothBusy}
+      setupError={bluetoothError}
       onSaveSlot={
         setup?.status === "ready" &&
         setup.patient.id === dashboard.patientId &&

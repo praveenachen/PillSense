@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState, type ReactNode } from "react";
 import { DispenserVisual, type DispenserTone } from "./dispenser-visual";
 import { Icon, type IconName } from "./mobile-ui";
 import { PhoneOverlay } from "./phone-overlay";
@@ -62,7 +62,7 @@ const statusDot: Record<DispenserStatusTone, string> = {
   offline: "bg-red-500 shadow-[0_0_9px_rgba(239,68,68,0.85)]",
 };
 
-export function DispenserView({ medications, device, selectedSlot, onSelectSlot, onOpenSetup, onSaveSlot, saveUnavailableMessage }: {
+export function DispenserView({ medications, device, selectedSlot, onSelectSlot, onOpenSetup, onSaveSlot, saveUnavailableMessage, demoSettings, onPair, onVerify, setupBusy, setupError }: {
   medications: MedicationAssignment[];
   device: DispenserDeviceView;
   selectedSlot: number;
@@ -72,9 +72,15 @@ export function DispenserView({ medications, device, selectedSlot, onSelectSlot,
   /** Persists a medication for a slot. Omitted when this account cannot manage medications. */
   onSaveSlot?: (value: SlotMedicationInput) => Promise<SavedMedicationAssignment>;
   saveUnavailableMessage?: string;
+  demoSettings?: ReactNode;
+  onPair?: () => void;
+  onVerify?: () => void;
+  setupBusy?: boolean;
+  setupError?: string | null;
 }) {
   const assignments = useMemo(() => new Map(medications.map((medication) => [medication.slot, medication])), [medications]);
-  const { steps, ready, status } = dispenserSetup(device, medications.length);
+  const { steps, ready, status } = dispenserSetup(device, onPair ? medications.filter((m) => (m.supplyCount ?? 0) > 0).length : medications.length);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [formSlot, setFormSlot] = useState<number | null>(null);
   const [saveSuccess, setSaveSuccess] = useState<string | null>(null);
   const firstEmptySlot = [1, 2, 3, 4, 5, 6, 7].find((slot) => !assignments.has(slot)) ?? null;
@@ -106,13 +112,15 @@ export function DispenserView({ medications, device, selectedSlot, onSelectSlot,
     <div className="space-y-4 overflow-x-hidden">
       <header className="-mx-5 flex min-h-11 items-center justify-between gap-3 border-b border-pd-line px-5 pb-3">
         <h1 className="text-[1.45rem] font-semibold tracking-tight text-pd-text">My Dispenser</h1>
-        <button type="button" onClick={onOpenSetup} aria-label="Open dispenser settings" className="pd-focus grid size-11 place-items-center rounded-full text-pd-text transition-colors hover:bg-white/5"><Icon name="gear" size={22} /></button>
+        <button type="button" onClick={demoSettings ? () => setSettingsOpen(true) : onOpenSetup} aria-label="Open dispenser settings" className="pd-focus grid size-11 place-items-center rounded-full text-pd-text transition-colors hover:bg-white/5"><Icon name="gear" size={22} /></button>
       </header>
 
       <section aria-label="Dispenser status" className="flex min-h-8 items-center justify-between gap-3 px-1 text-sm">
         <span className="inline-flex items-center gap-2 font-medium text-pd-text"><span aria-hidden="true" className={`size-2.5 rounded-full ${device.connected ? statusDot.ready : statusDot.offline}`} />{device.connected ? "Connected" : "Disconnected"}</span>
         <span className="font-medium text-pd-muted">{status.label}</span>
       </section>
+
+      {settingsOpen && <PhoneOverlay label="Dispenser settings" onClose={() => setSettingsOpen(false)}><div className="space-y-3">{demoSettings}<button type="button" onClick={() => { setSettingsOpen(false); onOpenSetup(); }} className="pd-focus min-h-11 w-full rounded-full border border-pd-line px-4 text-sm text-pd-text">Medication setup</button></div></PhoneOverlay>}
 
       {saveSuccess && (
         <p role="status" className="rounded-pd-chip border border-pd-ok/40 bg-pd-ok/10 px-3 py-2 text-sm font-medium text-pd-ok">
@@ -137,7 +145,7 @@ export function DispenserView({ medications, device, selectedSlot, onSelectSlot,
                   <Icon name={stepIcon[step.id]} size={22} strokeWidth={2} />
                   {step.done && <span className="absolute -bottom-0.5 -right-0.5 grid size-4 place-items-center rounded-full border-2 border-pd-surface bg-pd-ok text-pd-bg"><Icon name="check" size={9} strokeWidth={3.4} /></span>}
                 </span>
-                <span className={`text-xs font-semibold ${glow ? "text-pd-text" : step.done ? "text-pd-text/80" : "text-pd-muted"}`}>{step.label}</span>
+                <span className={`text-xs font-semibold ${glow ? "text-pd-text" : step.done ? "text-pd-text/80" : "text-pd-muted"}`}>{onPair ? step.id === "pair" ? "Pair" : step.id === "verify" ? "Ready" : step.done ? "Loaded" : "Load slots" : step.label}</span>
               </>
             );
             const cls = `pd-focus flex w-[4.75rem] flex-col items-center gap-1.5 rounded-pd-chip py-1 text-center ${locked ? "opacity-40 grayscale" : "pd-press"}`;
@@ -145,6 +153,8 @@ export function DispenserView({ medications, device, selectedSlot, onSelectSlot,
               <li key={step.id} aria-current={step.current ? "step" : undefined} className="flex flex-1 items-start last:flex-none">
                 {step.id === "load" ? (
                   <button type="button" disabled={locked || firstEmptySlot === null} onClick={() => firstEmptySlot !== null && selectSlot(firstEmptySlot)} className={cls}>{body}</button>
+                ) : (step.id === "pair" ? onPair : onVerify) ? (
+                  <button type="button" onClick={step.id === "pair" ? onPair : onVerify} disabled={setupBusy || locked || (step.id === "pair" && device.connected)} className={cls}>{body}</button>
                 ) : locked ? (
                   <span aria-disabled="true" className={cls}>{body}</span>
                 ) : <span title="Operator-only setup is available outside patient navigation" className={cls}>{body}</span>}
@@ -154,6 +164,9 @@ export function DispenserView({ medications, device, selectedSlot, onSelectSlot,
           })}
         </ol>
       </section>
+
+      {setupBusy && <p role="status" className="px-1 text-xs text-pd-muted">Connecting to your dispenser…</p>}
+      {setupError && <p role="alert" className="rounded-pd-chip bg-red-500/10 p-3 text-sm text-red-300">{setupError}</p>}
 
       {formSlot !== null && (
         <PhoneOverlay label="Add medication" onClose={cancelForm}>

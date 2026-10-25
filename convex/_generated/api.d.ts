@@ -24,6 +24,7 @@ import type * as deviceIssues from "../deviceIssues.js";
 import type * as dispensing from "../dispensing.js";
 import type * as hardwareLab from "../hardwareLab.js";
 import type * as http from "../http.js";
+import type * as lib_activeDeviceAssignments from "../lib/activeDeviceAssignments.js";
 import type * as lib_agentRunCreation from "../lib/agentRunCreation.js";
 import type * as lib_authorization from "../lib/authorization.js";
 import type * as lib_instructionOptions from "../lib/instructionOptions.js";
@@ -42,6 +43,7 @@ import type * as refills from "../refills.js";
 import type * as reminders from "../reminders.js";
 import type * as vision from "../vision.js";
 import type * as walgreens from "../walgreens.js";
+import type * as walgreensAdapter from "../walgreensAdapter.js";
 
 import type {
   ApiFromModules,
@@ -66,6 +68,7 @@ declare const fullApi: ApiFromModules<{
   dispensing: typeof dispensing;
   hardwareLab: typeof hardwareLab;
   http: typeof http;
+  "lib/activeDeviceAssignments": typeof lib_activeDeviceAssignments;
   "lib/agentRunCreation": typeof lib_agentRunCreation;
   "lib/authorization": typeof lib_authorization;
   "lib/instructionOptions": typeof lib_instructionOptions;
@@ -84,6 +87,7 @@ declare const fullApi: ApiFromModules<{
   reminders: typeof reminders;
   vision: typeof vision;
   walgreens: typeof walgreens;
+  walgreensAdapter: typeof walgreensAdapter;
 }>;
 
 /**

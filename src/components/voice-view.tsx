@@ -63,7 +63,7 @@ export function VoiceView(props: VoiceViewProps) {
         ? "Getting voice ready..."
         : connection === "TEXT_ONLY"
           ? "Voice unavailable"
-          : "I’m listening.";
+          : phase === "LISTENING" ? "I’m listening." : "Tap to talk";
   const support = phase === "PROCESSING"
     ? "Processing your last request."
     : phase === "SPEAKING"
@@ -72,7 +72,7 @@ export function VoiceView(props: VoiceViewProps) {
         ? "Cartesia voice isn’t configured on the server. Use Type instead from the menu."
         : connection === "CHECKING"
           ? ""
-          : "Tell me what you need, or just talk naturally.";
+          : phase === "LISTENING" ? "Tell me what you need, or just talk naturally." : "Start a conversation or open a medication reminder.";
   const visualState = error ? "error" : phase.toLowerCase();
   const latestAssistant = [...conversation].reverse().find((message) => message.role === "assistant")?.text ?? caption;
   const latestUser = [...conversation].reverse().find((message) => message.role === "user")?.text ?? transcript;

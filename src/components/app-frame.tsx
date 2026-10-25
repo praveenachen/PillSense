@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { Providers } from "../app/providers";
 import { OnboardingGate } from "./onboarding-gate";
 import { PersistentArduinoLab } from "./persistent-arduino-lab";
+import { ArduinoGatewayProvider } from "./arduino-gateway-provider";
 
 /**
  * Root composition. The Hardware Lab owns the browser's single Bluetooth transport and its
@@ -23,8 +24,10 @@ export function AppFrame({ children, authUiConfigured }: { children: ReactNode; 
   }
   return (
     <Providers>
-      <OnboardingGate>{children}</OnboardingGate>
-      {lab}
+      <ArduinoGatewayProvider>
+        <OnboardingGate>{children}</OnboardingGate>
+        {lab}
+      </ArduinoGatewayProvider>
     </Providers>
   );
 }

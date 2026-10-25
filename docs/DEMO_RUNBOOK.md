@@ -55,6 +55,33 @@ npm.cmd run demo:advance-missed-dose
 npm.cmd run demo:scenario -- low-supply
 ```
 
+### Final CalHacks configuration
+
+The baseline seeded by `demo:seed` is:
+
+| Slot | Medication |
+|---|---|
+| 0 | HOME (reserved, never assigned) |
+| 1 | Vitamin D |
+| 2 | Ibuprofen (Advil 200 mg tablet, explicitly labeled synthetic) |
+| 3 | Omega-3 |
+| 4 | **Empty.** Tylenol is added live through the camera scan. |
+| 5 | Magnesium |
+| 6 | Iron Pills |
+| 7 | Empty spare |
+
+No Tylenol is ever seeded. Any Tylenol in the database came from an earlier camera scan saved through the app, which is why `demo:seed` will not touch it. Seeding is idempotent, never moves a medication into a different slot, and reports an occupied slot instead of overwriting it.
+
+```powershell
+npm.cmd run demo:seed                  # baseline; reports any occupied slot as slotConflicts
+npm.cmd run demo:final-status          # compares the dispenser with the table above (read-only)
+npm.cmd run demo:release-slot -- 4     # shows the slot, then asks you to type RELEASE SLOT 4
+npm.cmd run demo:prepare-final         # seed, review Slots 4/7 and any conflict, re-seed, verify
+npm.cmd run demo:status
+```
+
+`demo:release-slot` and `demo:prepare-final` first print the assignment that would be released, then require the exact phrase `RELEASE SLOT <n>`. A release deactivates that assignment and its medication/schedule, but keeps every row, so history stays intact. It works only on the synthetic demo patient's dispenser, refuses while a dispense for that slot is unsettled, and never sends a device command or changes inventory. Do not run `demo:scenario -- onboarding` before the final take: it deactivates every seeded medication (re-run `demo:seed` to restore them). The low-supply scenario also reacts to the baseline's intentionally low Magnesium (3 pills).
+
 Expected output is a small JSON result with synthetic scenario IDs and safe states. Status never prints patient names, API keys, pharmacy URLs, camera frames, prescriptions, or callback tokens. Seed is idempotent. Reset archives active scenario records and closes demo state while retaining events, cases, investigations, and completed checkouts.
 
 ## Scenario A — medication companion
@@ -62,12 +89,12 @@ Expected output is a small JSON result with synthetic scenario IDs and safe stat
 1. Run `npm.cmd run demo:scenario -- onboarding`.
 2. Sign in as the configured caregiver at `http://localhost:3000/demo`.
 3. Open **Dispenser**, choose an empty slot, and select **Scan with camera**. Display `/demo/synthetic-advil-label.svg` on another screen or print it; it is visibly synthetic and supplies no dosing schedule.
-4. Capture the label through the existing Claude Vision scanner. Review/correct every extracted field. Explicitly enter instructions, timezone, time, weekdays, and Slot 6 before saving.
+4. Capture the label through the existing Claude Vision scanner. Review/correct every extracted field. Explicitly enter instructions, timezone, time, weekdays, and the target slot before saving.
 5. Confirm the saved medication appears in Today, Schedule, and Dispenser.
-6. Alternatively, for a predictable due state, run `npm.cmd run demo:scenario -- successful-dose`.
-7. Open **Voice** and press **Start scheduled conversation**. This user gesture arms Cartesia and avoids browser autoplay claims. Say **Yes**, **Yes please**, then **Yes**. The reviewed Advil/ibuprofen education is sourced from MedlinePlus and is general information, not individualized advice.
+6. Alternatively, for the predictable voice-to-hardware due state, run `npm.cmd run demo:scenario -- successful-dose`. This creates an Iron Pills reminder for the fixed Slot 6 fixture; it does not send a device command.
+7. Open **Voice** and press **Start scheduled conversation**. This user gesture arms Cartesia and avoids browser autoplay claims. Say **Yes, I'm ready**. If a browser/BLE preflight fails before command authorization, repeating the readiness response may resume that still-unattempted session; it cannot authorize a second command after an attempt exists.
 8. Optionally enable the explicit local-camera consent checkbox. Open **Operator Hardware Lab**. In Camera, start one local observation and demonstrate a hand-near-mouth event. Stop and release the camera afterward. The gesture is observation evidence only.
-9. For physical hardware, use Hardware Lab **Controls** and follow all empty-carousel/manual-home confirmations. Pair the Arduino, GET_STATUS, dispatch the one supervised Slot 6 test, reconcile GET_LAST_RESULT, and physically inspect Slot 0. Voice never dispatches the motor.
+9. For physical hardware, use Hardware Lab **Controls** and follow all empty-carousel/manual-home confirmations. Pair the Arduino, GET_STATUS, and arm the one supervised Slot 6 voice demo. Return through the in-app **Patient app** link; the readiness response dispatches at most one authorized `MOVE,6,<id>`, reconciles `GET_LAST_RESULT`, and still requires physical inspection of Slot 0.
 10. Return to Voice and select **I took my medication**, then confirm. This is a patient report, separate from motor completion and camera evidence.
 
 If Cartesia, microphone, camera, or BLE is unavailable, use the visible text/touch fallback. Do not fabricate success.

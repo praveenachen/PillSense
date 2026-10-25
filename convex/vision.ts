@@ -16,6 +16,11 @@ const finalStatus = v.union(
   v.literal("ERROR"),
   v.literal("EXPIRED"),
 );
+const SESSION_TTL_MS = 5 * 60_000;
+
+function sessionExpiresAt(startedAt: number) {
+  return startedAt + SESSION_TTL_MS;
+}
 
 function validateExternalId(value: string, label: string) {
   if (!/^[A-Za-z0-9_-]{8,64}$/.test(value)) {
@@ -44,7 +49,23 @@ export const beginSession = mutation({
       if (existing.initiatedBy !== viewer._id || existing.patientId !== patient._id) {
         throw new ConvexError("Camera session access denied");
       }
-      return { sessionId: existing._id, duplicate: true };
+      if (existing.status !== "ACTIVE") {
+        throw new ConvexError("Camera session ID is already closed");
+      }
+      const expiresAt = sessionExpiresAt(existing.startedAt);
+      if (now >= expiresAt) {
+        await ctx.db.patch(existing._id, {
+          status: "EXPIRED",
+          endedAt: now,
+          updatedAt: now,
+        });
+        throw new ConvexError("Camera session has expired");
+      }
+      return {
+        kind: "RECOVER_EXISTING" as const,
+        sessionId: existing.sessionId,
+        expiresAt,
+      };
     }
 
     const active = await ctx.db
@@ -53,11 +74,17 @@ export const beginSession = mutation({
         q.eq("patientId", patient._id).eq("status", "ACTIVE"),
       )
       .first();
-    if (active && now - active.startedAt <= 6 * 60_000) {
-      throw new ConvexError("A camera observation session is already active");
-    }
-    if (active) {
+    if (active && now >= sessionExpiresAt(active.startedAt)) {
       await ctx.db.patch(active._id, { status: "EXPIRED", endedAt: now, updatedAt: now });
+    } else if (active) {
+      if (active.initiatedBy !== viewer._id) {
+        throw new ConvexError("Another authorized operator owns the active camera session");
+      }
+      return {
+        kind: "RECOVER_EXISTING" as const,
+        sessionId: active.sessionId,
+        expiresAt: sessionExpiresAt(active.startedAt),
+      };
     }
 
     const sessionId = await ctx.db.insert("cameraObservationSessions", {
@@ -70,7 +97,45 @@ export const beginSession = mutation({
       createdAt: now,
       updatedAt: now,
     });
-    return { sessionId, duplicate: false };
+    return {
+      kind: "CREATED" as const,
+      sessionId: args.sessionId,
+      expiresAt: sessionExpiresAt(args.startedAt),
+      recordId: sessionId,
+    };
+  },
+});
+
+export const inspectSession = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const serverNow = Date.now();
+    const { viewer, patient } = await requireHardwareLabOperator(ctx);
+    const active = await ctx.db
+      .query("cameraObservationSessions")
+      .withIndex("by_patient_and_status", (q) =>
+        q.eq("patientId", patient._id).eq("status", "ACTIVE"),
+      )
+      .first();
+    if (!active) return { kind: "NONE" as const, reconciled: false };
+    const expiresAt = sessionExpiresAt(active.startedAt);
+    if (serverNow >= expiresAt) {
+      await ctx.db.patch(active._id, {
+        status: "EXPIRED",
+        endedAt: serverNow,
+        updatedAt: serverNow,
+      });
+      return { kind: "NONE" as const, reconciled: true };
+    }
+    if (active.initiatedBy !== viewer._id) {
+      return { kind: "OTHER_OPERATOR_ACTIVE" as const, expiresAt };
+    }
+    return {
+      kind: "OWNED_ACTIVE" as const,
+      sessionId: active.sessionId,
+      startedAt: active.startedAt,
+      expiresAt,
+    };
   },
 });
 
@@ -86,12 +151,12 @@ export const recordEvent = mutation({
   handler: async (ctx, args) => {
     validateExternalId(args.sessionId, "Session ID");
     validateExternalId(args.eventId, "Event ID");
-    const { viewer } = await requireHardwareLabOperator(ctx);
+    const { viewer, patient } = await requireHardwareLabOperator(ctx);
     const session = await ctx.db
       .query("cameraObservationSessions")
       .withIndex("by_sessionId", (q) => q.eq("sessionId", args.sessionId))
       .unique();
-    if (!session || session.initiatedBy !== viewer._id) {
+    if (!session || session.initiatedBy !== viewer._id || session.patientId !== patient._id) {
       throw new ConvexError("Camera session access denied");
     }
     const now = Date.now();
@@ -143,12 +208,12 @@ export const recordEvent = mutation({
 export const closeSession = mutation({
   args: { sessionId: v.string(), status: finalStatus, endedAt: v.number() },
   handler: async (ctx, args) => {
-    const { viewer } = await requireHardwareLabOperator(ctx);
+    const { viewer, patient } = await requireHardwareLabOperator(ctx);
     const session = await ctx.db
       .query("cameraObservationSessions")
       .withIndex("by_sessionId", (q) => q.eq("sessionId", args.sessionId))
       .unique();
-    if (!session || session.initiatedBy !== viewer._id) {
+    if (!session || session.initiatedBy !== viewer._id || session.patientId !== patient._id) {
       throw new ConvexError("Camera session access denied");
     }
     const now = Date.now();

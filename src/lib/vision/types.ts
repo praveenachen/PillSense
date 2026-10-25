@@ -10,7 +10,7 @@ export const observationTypes = [
 ] as const;
 
 export type ObservationType = (typeof observationTypes)[number];
-export type LocalSessionStatus = "ACTIVE" | "STOPPED" | "ERROR" | "EXPIRED";
+export type LocalSessionStatus = "STARTING" | "ACTIVE" | "STOPPED" | "ERROR" | "EXPIRED";
 
 export type VisionObservation = {
   eventId: string;
@@ -26,6 +26,7 @@ export type VisionSnapshot = {
   status: LocalSessionStatus;
   cameraIndex?: number;
   previewAvailable?: boolean;
+  initializationPhase?: string;
   events: VisionObservation[];
 };
 
@@ -34,7 +35,7 @@ const validTypes = new Set<string>(observationTypes);
 export function parseVisionSnapshot(value: unknown): VisionSnapshot {
   if (!value || typeof value !== "object") throw new Error("Invalid vision bridge response");
   const data = value as Record<string, unknown>;
-  if (typeof data.sessionId !== "string" || !["ACTIVE", "STOPPED", "ERROR", "EXPIRED"].includes(String(data.status))) {
+  if (typeof data.sessionId !== "string" || !["STARTING", "ACTIVE", "STOPPED", "ERROR", "EXPIRED"].includes(String(data.status))) {
     throw new Error("Invalid vision session response");
   }
   if (!Array.isArray(data.events)) throw new Error("Invalid vision event list");
@@ -55,11 +56,15 @@ export function parseVisionSnapshot(value: unknown): VisionSnapshot {
   if (data.previewAvailable !== undefined && typeof data.previewAvailable !== "boolean") {
     throw new Error("Invalid vision preview state");
   }
+  if (data.initializationPhase !== undefined && typeof data.initializationPhase !== "string") {
+    throw new Error("Invalid vision initialization phase");
+  }
   return {
     sessionId: data.sessionId,
     status: data.status as LocalSessionStatus,
     ...(typeof data.cameraIndex === "number" ? { cameraIndex: data.cameraIndex } : {}),
     ...(typeof data.previewAvailable === "boolean" ? { previewAvailable: data.previewAvailable } : {}),
+    ...(typeof data.initializationPhase === "string" ? { initializationPhase: data.initializationPhase } : {}),
     events,
   };
 }

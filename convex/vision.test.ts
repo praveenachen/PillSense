@@ -88,4 +88,101 @@ describe("camera observations", () => {
     })).rejects.toThrow("Camera session access denied");
     await expect(other.query(api.vision.latest, {})).resolves.toBeNull();
   });
+
+  it("recovers the current operator's active session instead of creating an overlap", async () => {
+    const { root, actor } = await setup();
+    const startedAt = Date.now();
+    const created = await actor.mutation(api.vision.beginSession, {
+      sessionId: "vision_recover_01", startedAt,
+    });
+    const recovered = await actor.mutation(api.vision.beginSession, {
+      sessionId: "vision_recover_02", startedAt: startedAt + 1,
+    });
+    expect(created.kind).toBe("CREATED");
+    expect(recovered).toMatchObject({ kind: "RECOVER_EXISTING", sessionId: "vision_recover_01" });
+    const active = await root.run((ctx) => ctx.db
+      .query("cameraObservationSessions")
+      .filter((q) => q.eq(q.field("status"), "ACTIVE"))
+      .collect());
+    expect(active).toHaveLength(1);
+  });
+
+  it("expires a stale owned session before permitting a new one", async () => {
+    const { root, actor } = await setup();
+    const now = Date.now();
+    const { viewerId, patientId } = await root.run(async (ctx) => {
+      const viewer = await ctx.db.query("appUsers")
+        .withIndex("by_tokenIdentifier", (q) => q.eq("tokenIdentifier", "issuer|vision-owner"))
+        .unique();
+      if (!viewer) throw new Error("Missing test viewer");
+      const relationship = await ctx.db.query("careRelationships")
+        .withIndex("by_caregiver", (q) => q.eq("caregiverId", viewer._id))
+        .first();
+      if (!relationship) throw new Error("Missing test relationship");
+      return { viewerId: viewer._id, patientId: relationship.patientId };
+    });
+    await root.run((ctx) => ctx.db.insert("cameraObservationSessions", {
+      sessionId: "vision_stale_01", patientId, initiatedBy: viewerId,
+      source, status: "ACTIVE", startedAt: now - 300_001, createdAt: now - 300_001,
+      updatedAt: now - 300_001,
+    }));
+    await expect(actor.mutation(api.vision.inspectSession, {})).resolves.toEqual({ kind: "NONE", reconciled: true });
+    const stale = await root.run((ctx) => ctx.db.query("cameraObservationSessions")
+      .withIndex("by_sessionId", (q) => q.eq("sessionId", "vision_stale_01"))
+      .unique());
+    expect(stale?.status).toBe("EXPIRED");
+    await expect(actor.mutation(api.vision.beginSession, {
+      sessionId: "vision_after_stale", startedAt: now,
+    })).resolves.toMatchObject({ kind: "CREATED" });
+  });
+
+  it("does not disclose or terminate another operator's active session", async () => {
+    const { root, actor } = await setup();
+    const startedAt = Date.now();
+    await actor.mutation(api.vision.beginSession, { sessionId: "vision_owned_01", startedAt });
+    await root.run(async (ctx) => {
+      const owner = await ctx.db.query("appUsers")
+        .withIndex("by_tokenIdentifier", (q) => q.eq("tokenIdentifier", "issuer|vision-owner"))
+        .unique();
+      if (!owner) throw new Error("Missing owner");
+      const relationship = await ctx.db.query("careRelationships")
+        .withIndex("by_caregiver", (q) => q.eq("caregiverId", owner._id))
+        .first();
+      if (!relationship) throw new Error("Missing patient");
+      const otherId = await ctx.db.insert("appUsers", {
+        tokenIdentifier: "issuer|vision-same-patient", displayName: "Second operator",
+        role: "caregiver", isSynthetic: false, createdAt: startedAt,
+      });
+      await ctx.db.insert("careRelationships", {
+        caregiverId: otherId, patientId: relationship.patientId, status: "active", createdAt: startedAt,
+      });
+    });
+    const other = root.withIdentity({ tokenIdentifier: "issuer|vision-same-patient", name: "Second operator" });
+    const inspected = await other.mutation(api.vision.inspectSession, {});
+    expect(inspected.kind).toBe("OTHER_OPERATOR_ACTIVE");
+    expect(inspected).not.toHaveProperty("sessionId");
+    await expect(other.mutation(api.vision.closeSession, {
+      sessionId: "vision_owned_01", status: "STOPPED", endedAt: startedAt + 1,
+    })).rejects.toThrow("Camera session access denied");
+  });
+
+  it("closes an owned orphan idempotently and permits a fresh session", async () => {
+    const { root, actor } = await setup();
+    const startedAt = Date.now();
+    await actor.mutation(api.vision.beginSession, { sessionId: "vision_orphan_01", startedAt });
+    await actor.mutation(api.vision.closeSession, {
+      sessionId: "vision_orphan_01", status: "STOPPED", endedAt: startedAt + 1,
+    });
+    await expect(actor.mutation(api.vision.closeSession, {
+      sessionId: "vision_orphan_01", status: "STOPPED", endedAt: startedAt + 2,
+    })).resolves.toEqual({ closed: true });
+    await expect(actor.mutation(api.vision.beginSession, {
+      sessionId: "vision_fresh_01", startedAt: startedAt + 3,
+    })).resolves.toMatchObject({ kind: "CREATED", sessionId: "vision_fresh_01" });
+    const sessions = await root.run((ctx) => ctx.db.query("cameraObservationSessions").collect());
+    expect(sessions.map((session) => [session.sessionId, session.status])).toEqual([
+      ["vision_orphan_01", "STOPPED"],
+      ["vision_fresh_01", "ACTIVE"],
+    ]);
+  });
 });

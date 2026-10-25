@@ -1,8 +1,12 @@
 from dataclasses import dataclass
+from types import SimpleNamespace
+import sys
+import threading
 import time
 
 import pytest
 
+import vision.camera as camera_module
 from vision.camera import CameraBusyError, CameraSessionManager
 
 
@@ -64,10 +68,10 @@ def test_start_stop_lifecycle_releases_single_camera_owner():
         detector_factory=lambda: detector,
         preview_encoder=lambda _frame: b"jpeg-preview",
     )
-    started = manager.start("session-one")
-    assert started["status"] == "ACTIVE"
+    manager.start("session-one")
     with pytest.raises(CameraBusyError):
         manager.start("session-two")
+    wait_for(lambda: manager.snapshot("session-one")["status"] == "ACTIVE")
     stopped = manager.stop("session-one")
     assert stopped["status"] == "STOPPED"
     assert capture.released is True
@@ -97,7 +101,9 @@ def test_preview_uses_same_capture_and_requested_camera_without_storing_history(
 def test_camera_unavailable_returns_error_events_without_worker():
     capture = FakeCapture(opened=False)
     manager = CameraSessionManager(capture_factory=lambda _index: capture)
-    snapshot = manager.start("session-unavailable")
+    manager.start("session-unavailable")
+    wait_for(lambda: manager.snapshot("session-unavailable")["status"] == "ERROR")
+    snapshot = manager.snapshot("session-unavailable")
     assert snapshot["status"] == "ERROR"
     assert [event["type"] for event in snapshot["events"]] == ["CAMERA_ERROR", "CAMERA_STOPPED"]
     assert capture.released is True
@@ -125,3 +131,46 @@ def test_person_transitions_and_gesture_are_meaningful_not_per_frame():
     assert types.count("PERSON_NOT_VISIBLE") == 1
     assert types.count("PERSON_VISIBLE") == 1
     assert types.count("HAND_AT_MOUTH_DETECTED") == 1
+
+
+def test_blocked_camera_initialization_returns_immediately_and_times_out_with_phase():
+    entered = threading.Event()
+    release = threading.Event()
+    capture = FakeCapture()
+
+    def blocking_capture(_index):
+        entered.set()
+        release.wait(1.0)
+        return capture
+
+    manager = CameraSessionManager(
+        initialization_timeout_seconds=0.05,
+        capture_factory=blocking_capture,
+        detector_factory=FakeDetector,
+    )
+    before = time.monotonic()
+    snapshot = manager.start("session-blocked")
+    assert time.monotonic() - before < 0.05
+    assert snapshot["status"] == "STARTING"
+    assert entered.wait(0.2)
+    wait_for(lambda: manager.snapshot("session-blocked")["status"] == "ERROR")
+    timed_out = manager.snapshot("session-blocked")
+    errors = [event for event in timed_out["events"] if event["type"] == "CAMERA_ERROR"]
+    assert errors[0]["diagnostic"] == "Camera initialization timed out during opening camera"
+    release.set()
+    wait_for(lambda: capture.released)
+
+
+def test_windows_service_uses_directshow_for_worker_thread_camera_open(monkeypatch):
+    calls = []
+    capture = FakeCapture()
+    fake_cv2 = SimpleNamespace(
+        CAP_DSHOW=700,
+        CAP_PROP_FRAME_WIDTH=3,
+        CAP_PROP_FRAME_HEIGHT=4,
+        VideoCapture=lambda *args: calls.append(args) or capture,
+    )
+    monkeypatch.setitem(sys.modules, "cv2", fake_cv2)
+    monkeypatch.setattr(camera_module.os, "name", "nt")
+    assert camera_module._default_capture(0) is capture
+    assert calls == [(0, 700)]

@@ -25,6 +25,7 @@ class Settings:
     port: int = 8101
     camera_index: int = 0
     timeout_seconds: float = 300.0
+    initialization_timeout_seconds: float = 15.0
     allowed_origins: tuple[str, ...] = (
         "http://localhost:3000",
         "http://127.0.0.1:3000",
@@ -49,6 +50,7 @@ class Settings:
             port=int(os.getenv("PILLSENSE_VISION_PORT", "8101")),
             camera_index=int(os.getenv("PILLSENSE_VISION_CAMERA", "0")),
             timeout_seconds=float(os.getenv("PILLSENSE_VISION_TIMEOUT_SECONDS", "300")),
+            initialization_timeout_seconds=float(os.getenv("PILLSENSE_VISION_INITIALIZATION_TIMEOUT_SECONDS", "15")),
             allowed_origins=origins,
         )
 
@@ -113,6 +115,7 @@ def create_app(
     active_manager = manager or CameraSessionManager(
         camera_index=active_settings.camera_index,
         timeout_seconds=active_settings.timeout_seconds,
+        initialization_timeout_seconds=active_settings.initialization_timeout_seconds,
     )
     capabilities = CapabilityRegistry()
 
@@ -160,6 +163,35 @@ def create_app(
             return active_manager.start(body.sessionId, body.cameraIndex)
         except CameraBusyError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @app.post("/v1/sessions/{session_id}/recover", dependencies=[Depends(require_origin)])
+    def recover_session(
+        session_id: str,
+        token: str | None = Depends(capability_header),
+    ) -> dict[str, object]:
+        """Attach a fresh browser capability without opening another camera."""
+        validated = capabilities.require(token)
+        try:
+            snapshot = active_manager.snapshot(session_id)
+        except SessionNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        if snapshot["status"] != "ACTIVE":
+            raise HTTPException(status_code=409, detail="Camera observation session is not active")
+        capabilities.bind(validated, session_id)
+        return snapshot
+
+    @app.post("/v1/sessions/{session_id}/stop-if-present", dependencies=[Depends(require_origin)])
+    def stop_session_if_present(
+        session_id: str,
+        token: str | None = Depends(capability_header),
+    ) -> dict[str, object]:
+        """Stop one known local session; a missing session is already locally stopped."""
+        validated = capabilities.require(token)
+        capabilities.bind(validated, session_id)
+        try:
+            return {"outcome": "STOPPED", "snapshot": active_manager.stop(session_id)}
+        except SessionNotFoundError:
+            return {"outcome": "NOT_FOUND"}
 
     @app.get("/v1/sessions/{session_id}/events", dependencies=[Depends(require_origin)])
     def session_events(

@@ -23,4 +23,24 @@ describe("vision observation UI", () => {
     expect(source).not.toMatch(/TAKEN|COMPLETED/);
     expect(source).not.toMatch(/getUserMedia|navigator\.mediaDevices/);
   });
+
+  it("can block new starts while an existing session needs recovery", () => {
+    const html = renderToStaticMarkup(<VisionObservationView
+      state={{ status: "IDLE", bridge: "CONNECTED" }}
+      startBlocked
+      onStart={() => undefined}
+      onStop={() => undefined}
+    />);
+    expect(html).toMatch(/disabled=""[^>]*>Start observation/);
+  });
+
+  it("offers cancellation while initialization is in progress", () => {
+    const html = renderToStaticMarkup(<VisionObservationView
+      state={{ status: "STARTING", bridge: "CONNECTED" }}
+      onStart={() => undefined}
+      onStop={() => undefined}
+    />);
+    expect(html).toContain("Cancel initialization");
+    expect(html).not.toMatch(/disabled=""[^>]*>Cancel initialization/);
+  });
 });

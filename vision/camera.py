@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
+import logging
+import os
 import threading
 import time
 from typing import Callable, Protocol
@@ -24,6 +26,7 @@ class Detector(Protocol):
 
 
 class SessionStatus(str, Enum):
+    STARTING = "STARTING"
     ACTIVE = "ACTIVE"
     STOPPED = "STOPPED"
     ERROR = "ERROR"
@@ -36,10 +39,12 @@ class SessionRecord:
     camera_index: int
     status: SessionStatus
     started_at: int
+    timeout_seconds: float
     events: list[ObservationEvent]
     stop_requested: threading.Event
     thread: threading.Thread | None = None
     latest_preview: bytes | None = None
+    initialization_phase: str = "queued"
 
 
 class CameraBusyError(RuntimeError):
@@ -53,7 +58,14 @@ class SessionNotFoundError(RuntimeError):
 def _default_capture(camera_index: int) -> Capture:
     import cv2
 
-    capture = cv2.VideoCapture(camera_index)
+    # MSMF can block indefinitely when VideoCapture is opened from FastAPI's
+    # worker/background threads even though the same camera works on the main
+    # thread. DirectShow is the stable Windows backend for this local service.
+    capture = (
+        cv2.VideoCapture(camera_index, cv2.CAP_DSHOW)
+        if os.name == "nt"
+        else cv2.VideoCapture(camera_index)
+    )
     capture.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
     capture.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
     return capture
@@ -84,6 +96,7 @@ class CameraSessionManager:
         self,
         camera_index: int = 0,
         timeout_seconds: float = 300.0,
+        initialization_timeout_seconds: float = 15.0,
         frame_interval_seconds: float = 0.03,
         capture_factory: Callable[[int], Capture] = _default_capture,
         detector_factory: Callable[[], Detector] = _default_detector,
@@ -91,6 +104,7 @@ class CameraSessionManager:
     ):
         self.camera_index = camera_index
         self.timeout_seconds = timeout_seconds
+        self.initialization_timeout_seconds = initialization_timeout_seconds
         self.frame_interval_seconds = frame_interval_seconds
         self.capture_factory = capture_factory
         self.detector_factory = detector_factory
@@ -111,8 +125,16 @@ class CameraSessionManager:
                 "rawFramesStored": False,
             }
 
-    def start(self, session_id: str, camera_index: int | None = None) -> dict[str, object]:
+    def start(
+        self,
+        session_id: str,
+        camera_index: int | None = None,
+        timeout_seconds: float | None = None,
+    ) -> dict[str, object]:
         selected_camera_index = self.camera_index if camera_index is None else camera_index
+        selected_timeout = self.timeout_seconds if timeout_seconds is None else min(timeout_seconds, self.timeout_seconds)
+        if selected_timeout <= 0:
+            raise ValueError("Camera session timeout must be positive")
         with self._lock:
             if self._active is not None and self._active.status == SessionStatus.ACTIVE:
                 if self._active.session_id == session_id:
@@ -128,56 +150,28 @@ class CameraSessionManager:
         record = SessionRecord(
             session_id=session_id,
             camera_index=selected_camera_index,
-            status=SessionStatus.ACTIVE,
+            status=SessionStatus.STARTING,
             started_at=int(time.time() * 1000),
+            timeout_seconds=selected_timeout,
             events=[],
             stop_requested=threading.Event(),
         )
-        try:
-            capture = self.capture_factory(selected_camera_index)
-        except Exception as exc:
-            record.status = SessionStatus.ERROR
-            self._emit(record, ObservationType.CAMERA_ERROR, f"Camera initialization failed: {type(exc).__name__}")
-            self._emit(record, ObservationType.CAMERA_STOPPED, "Camera never became active")
-            with self._lock:
-                self._starting_session_id = None
-                self._remember(record)
-            return self._snapshot_record(record)
-        if not capture.isOpened():
-            capture.release()
-            record.status = SessionStatus.ERROR
-            self._emit(record, ObservationType.CAMERA_ERROR, "Camera unavailable or permission denied")
-            self._emit(record, ObservationType.CAMERA_STOPPED, "Camera never became active")
-            with self._lock:
-                self._starting_session_id = None
-                self._remember(record)
-            return self._snapshot_record(record)
-
-        try:
-            detector = self.detector_factory()
-        except Exception as exc:
-            capture.release()
-            record.status = SessionStatus.ERROR
-            self._emit(record, ObservationType.CAMERA_ERROR, f"Detector initialization failed: {type(exc).__name__}")
-            self._emit(record, ObservationType.CAMERA_STOPPED, "Camera released after detector error")
-            with self._lock:
-                self._starting_session_id = None
-                self._remember(record)
-            return self._snapshot_record(record)
-
-        self._emit(record, ObservationType.CAMERA_STARTED)
         thread = threading.Thread(
-            target=self._run,
-            args=(record, capture, detector),
+            target=self._initialize_and_run,
+            args=(record,),
             name=f"pillsense-vision-{session_id[:8]}",
             daemon=True,
         )
         record.thread = thread
         with self._lock:
             self._remember(record)
-            self._active = record
-            self._starting_session_id = None
         thread.start()
+        threading.Thread(
+            target=self._watch_initialization,
+            args=(record,),
+            name=f"pillsense-vision-watch-{session_id[:8]}",
+            daemon=True,
+        ).start()
         return self._snapshot_record(record)
 
     def stop(self, session_id: str) -> dict[str, object]:
@@ -187,8 +181,10 @@ class CameraSessionManager:
                 raise SessionNotFoundError("Unknown camera observation session")
             thread = record.thread
             record.stop_requested.set()
+            if record.status == SessionStatus.STARTING:
+                self._finish_initialization(record, SessionStatus.STOPPED, "Camera initialization cancelled by operator")
         if thread and thread.is_alive():
-            thread.join(timeout=5.0)
+            thread.join(timeout=0.25 if record.status == SessionStatus.STOPPED else 5.0)
         return self.snapshot(session_id)
 
     def events_after(self, session_id: str, after: str | None) -> list[dict[str, object]]:
@@ -231,6 +227,96 @@ class CameraSessionManager:
             if oldest != record.session_id:
                 self._sessions.pop(oldest, None)
 
+    def _initialize_and_run(self, record: SessionRecord) -> None:
+        logger = logging.getLogger("uvicorn.error")
+        capture = None
+        detector = None
+        try:
+            with self._lock:
+                record.initialization_phase = "opening camera"
+            logger.info(
+                "Session %s: opening camera %s%s",
+                record.session_id,
+                record.camera_index,
+                " with DirectShow" if os.name == "nt" else "",
+            )
+            capture = self.capture_factory(record.camera_index)
+            if record.stop_requested.is_set() or record.status != SessionStatus.STARTING:
+                capture.release()
+                return
+            if not capture.isOpened():
+                capture.release()
+                self._finish_initialization(record, SessionStatus.ERROR, "Camera unavailable or permission denied")
+                return
+
+            with self._lock:
+                record.initialization_phase = "loading MediaPipe detector"
+            logger.info("Session %s: loading MediaPipe detector", record.session_id)
+            detector = self.detector_factory()
+            if record.stop_requested.is_set() or record.status != SessionStatus.STARTING:
+                detector.close()
+                capture.release()
+                return
+
+            with self._lock:
+                record.status = SessionStatus.ACTIVE
+                record.initialization_phase = "active"
+                self._active = record
+                if self._starting_session_id == record.session_id:
+                    self._starting_session_id = None
+                self._emit(record, ObservationType.CAMERA_STARTED)
+            logger.info("Session %s: camera and detector active", record.session_id)
+            self._run(record, capture, detector)
+        except Exception as exc:
+            if detector is not None:
+                detector.close()
+            if capture is not None:
+                capture.release()
+            self._finish_initialization(
+                record,
+                SessionStatus.ERROR,
+                f"Camera initialization failed during {record.initialization_phase}: {type(exc).__name__}",
+            )
+            logger.exception("Session %s initialization failed during %s", record.session_id, record.initialization_phase)
+
+    def _watch_initialization(self, record: SessionRecord) -> None:
+        if record.stop_requested.wait(self.initialization_timeout_seconds):
+            return
+        with self._lock:
+            if record.status != SessionStatus.STARTING:
+                return
+            phase = record.initialization_phase
+            record.stop_requested.set()
+            self._finish_initialization(
+                record,
+                SessionStatus.ERROR,
+                f"Camera initialization timed out during {phase}",
+            )
+        logging.getLogger("uvicorn.error").error(
+            "Session %s: initialization timed out during %s",
+            record.session_id,
+            phase,
+        )
+
+    def _finish_initialization(
+        self,
+        record: SessionRecord,
+        status: SessionStatus,
+        diagnostic: str,
+    ) -> None:
+        with self._lock:
+            if record.status not in (SessionStatus.STARTING, SessionStatus.ERROR):
+                return
+            already_terminal = record.status == SessionStatus.ERROR
+            record.status = status
+            record.initialization_phase = "finished"
+            if self._starting_session_id == record.session_id:
+                self._starting_session_id = None
+            if status == SessionStatus.ERROR and not already_terminal:
+                self._emit(record, ObservationType.CAMERA_ERROR, diagnostic)
+            if not any(event.type == ObservationType.CAMERA_STOPPED for event in record.events):
+                self._emit(record, ObservationType.CAMERA_STOPPED, diagnostic)
+
     def _run(self, record: SessionRecord, capture: Capture, detector: Detector) -> None:
         started = time.monotonic()
         person_visible: bool | None = None
@@ -240,7 +326,7 @@ class CameraSessionManager:
         try:
             while not record.stop_requested.is_set():
                 now = time.monotonic()
-                if now - started >= self.timeout_seconds:
+                if now - started >= record.timeout_seconds:
                     terminal_status = SessionStatus.EXPIRED
                     stop_detail = "Five-minute observation window ended"
                     break
@@ -301,5 +387,6 @@ class CameraSessionManager:
             "status": record.status.value,
             "startedAt": record.started_at,
             "previewAvailable": record.latest_preview is not None,
+            "initializationPhase": record.initialization_phase,
             "events": [event.to_dict() for event in record.events],
         }

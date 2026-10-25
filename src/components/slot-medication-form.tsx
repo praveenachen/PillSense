@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type FormEvent, type ReactNode } from "react";
+import { useRef, useState, type FormEvent, type ReactNode } from "react";
 import { INSTRUCTION_OPTIONS } from "../../convex/lib/instructionOptions";
 import { Icon } from "./mobile-ui";
 import { MedicationCameraScanner } from "./medication-camera-scanner";
@@ -25,6 +25,12 @@ export type SlotMedicationInput = {
 };
 
 const input = "pd-focus min-h-11 w-full rounded-pd-chip border border-pd-line bg-pd-bg px-3 text-sm text-pd-text placeholder:text-pd-muted/70";
+
+export function claimMedicationSave(inFlight: { current: boolean }) {
+  if (inFlight.current) return false;
+  inFlight.current = true;
+  return true;
+}
 
 export function buildSlotMedicationInput(args: {
   slot: number;
@@ -66,16 +72,18 @@ export function SlotMedicationForm({ slot, onSave, onCancel, unavailableMessage 
   const [name, setName] = useState("");
   const [scan, setScan] = useState<MedicationScan | null>(null);
   const [scheduled, setScheduled] = useState(true);
+  const saveInFlight = useRef(false);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!onSave) return;
+    if (!onSave || !claimMedicationSave(saveInFlight)) return;
     const value = buildSlotMedicationInput({ slot, form: new FormData(event.currentTarget), days, scheduled, scan });
     setError(null);
     setSaving(true);
     try {
       await onSave(value);
     } catch (caught) {
+      saveInFlight.current = false;
       setError(medicationSaveError(caught));
       setSaving(false);
     }

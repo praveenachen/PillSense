@@ -48,21 +48,28 @@ export function DispenserScreen({ onOpenSetup }: { onOpenSetup: () => void }) {
       onSelectSlot={setSelectedSlot}
       onOpenSetup={onOpenSetup}
       synthetic={dashboard.isSynthetic}
-      onSaveSlot={setup?.status === "ready" ? async (value: SlotMedicationInput) => {
-        await createMedication({
-          patientId: setup.patient.id,
-          name: value.name,
-          instructions: value.instructions,
-          slot: value.slot,
-          localTime: value.localTime,
-          weekdays: value.weekdays,
-          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
-          demoInventory: value.demoInventory,
-          supplyCount: value.supplyCount,
-          scheduled: value.scheduled,
-          productDetails: value.productDetails,
-        });
-      } : undefined}
+      onSaveSlot={
+        setup?.status === "ready" &&
+        setup.patient.id === dashboard.patientId &&
+        setup.device.id === dashboard.deviceId
+          ? async (value: SlotMedicationInput) => {
+              const saved = await createMedication({
+                patientId: dashboard.patientId,
+                name: value.name,
+                instructions: value.instructions,
+                slot: value.slot,
+                localTime: value.localTime,
+                weekdays: value.weekdays,
+                timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+                demoInventory: value.demoInventory,
+                supplyCount: value.supplyCount,
+                scheduled: value.scheduled,
+                productDetails: value.productDetails,
+              });
+              return { slot: saved.slot };
+            }
+          : undefined
+      }
       saveUnavailableMessage="This account can’t add medications. Sign in with the account that manages this dispenser."
     />
   );

@@ -1,5 +1,6 @@
 import { v } from "convex/values";
 import { query } from "./_generated/server";
+import { getActiveDeviceAssignments } from "./lib/activeDeviceAssignments";
 import { requireIdentity } from "./lib/requireIdentity";
 
 export const setup = query({
@@ -37,11 +38,11 @@ export const setup = query({
       return { status: "unavailable" as const };
     }
 
-    const assignments = await ctx.db
-      .query("compartmentAssignments")
-      .withIndex("by_patient", (q) => q.eq("patientId", patient._id))
-      .take(7);
-    const activeAssignments = assignments.filter((assignment) => assignment.active);
+    const activeAssignments = await getActiveDeviceAssignments(
+      ctx,
+      patient._id,
+      device._id,
+    );
     const medicationRows = await Promise.all(
       activeAssignments.map(async (assignment) => {
         const medication = await ctx.db.get("medications", assignment.medicationId);

@@ -7,6 +7,7 @@ import { PhoneOverlay } from "./phone-overlay";
 import { SlotMedicationForm, type SlotMedicationInput } from "./slot-medication-form";
 
 type MedicationAssignment = { id: string; name: string; instructions?: string; slot: number; localTime: string | null; supplyCount?: number | null };
+type SavedMedicationAssignment = { slot: number };
 type DeviceRuntime = { state: string; connected: boolean; homeAligned: boolean; faultCode: string | null } | null;
 export type DispenserStatusTone = "ready" | "busy" | "setup" | "offline";
 export type DispenserDeviceView = {
@@ -69,12 +70,13 @@ export function DispenserView({ medications, device, selectedSlot, onSelectSlot,
   onOpenSetup: () => void;
   synthetic?: boolean;
   /** Persists a medication for a slot. Omitted when this account cannot manage medications. */
-  onSaveSlot?: (value: SlotMedicationInput) => Promise<void>;
+  onSaveSlot?: (value: SlotMedicationInput) => Promise<SavedMedicationAssignment>;
   saveUnavailableMessage?: string;
 }) {
   const assignments = useMemo(() => new Map(medications.map((medication) => [medication.slot, medication])), [medications]);
   const { steps, ready, status } = dispenserSetup(device, medications.length);
   const [formSlot, setFormSlot] = useState<number | null>(null);
+  const [saveSuccess, setSaveSuccess] = useState<string | null>(null);
   const firstEmptySlot = [1, 2, 3, 4, 5, 6, 7].find((slot) => !assignments.has(slot)) ?? null;
 
   /** The slot that was selected before an empty one opened the form, so closing the form puts the user back there. */
@@ -93,7 +95,10 @@ export function DispenserView({ medications, device, selectedSlot, onSelectSlot,
   }
 
   async function save(value: SlotMedicationInput) {
-    await onSaveSlot?.(value);
+    if (!onSaveSlot) return;
+    const saved = await onSaveSlot(value);
+    onSelectSlot(saved.slot);
+    setSaveSuccess(`${value.name} was saved to Slot ${saved.slot}.`);
     setFormSlot(null);
   }
 
@@ -108,6 +113,12 @@ export function DispenserView({ medications, device, selectedSlot, onSelectSlot,
         <span className="inline-flex items-center gap-2 font-medium text-pd-text"><span aria-hidden="true" className={`size-2.5 rounded-full ${device.connected ? statusDot.ready : statusDot.offline}`} />{device.connected ? "Connected" : "Disconnected"}</span>
         <span className="font-medium text-pd-muted">{status.label}</span>
       </section>
+
+      {saveSuccess && (
+        <p role="status" className="rounded-pd-chip border border-pd-ok/40 bg-pd-ok/10 px-3 py-2 text-sm font-medium text-pd-ok">
+          {saveSuccess}
+        </p>
+      )}
 
       <section aria-label="Interactive dispenser compartment map" className="relative -mx-2 py-2">
         <div aria-hidden="true" className="absolute inset-x-8 bottom-4 h-16 rounded-full bg-pd-accent/15 blur-3xl" />

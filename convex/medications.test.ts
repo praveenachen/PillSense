@@ -25,7 +25,12 @@ async function createCareTeam(tokenIdentifier: string) {
   if (setup.status !== "ready") {
     throw new Error("Expected a ready care team");
   }
-  return { root, actor, patientId: setup.patient.id };
+  return {
+    root,
+    actor,
+    patientId: setup.patient.id,
+    deviceId: setup.device.id,
+  };
 }
 
 describe("medication assignment security and validation", () => {
@@ -45,6 +50,72 @@ describe("medication assignment security and validation", () => {
     expect(forecast.status === "ready" && forecast.cases[0]?.forecast.triggerReason).toBeNull();
   });
 
+  it("renders a new active unscheduled Slot 4 assignment despite older inactive history", async () => {
+    const { root, actor, patientId, deviceId } = await createCareTeam(
+      "issuer|slot-four-history",
+    );
+
+    await root.run(async (ctx) => {
+      const caregiver = await ctx.db
+        .query("appUsers")
+        .withIndex("by_tokenIdentifier", (q) =>
+          q.eq("tokenIdentifier", "issuer|slot-four-history"),
+        )
+        .unique();
+      if (!caregiver) throw new Error("Expected caregiver");
+
+      const oldMedicationId = await ctx.db.insert("medications", {
+        patientId,
+        name: "Inactive historical medication",
+        instructions: "",
+        active: false,
+        createdBy: caregiver._id,
+        createdAt: 1,
+      });
+      for (let index = 0; index < 7; index += 1) {
+        await ctx.db.insert("compartmentAssignments", {
+          deviceId,
+          patientId,
+          medicationId: oldMedicationId,
+          slot: index === 0 ? 4 : (index % 7) + 1,
+          demoInventory: 0,
+          active: false,
+          assignedBy: caregiver._id,
+          createdAt: index + 1,
+        });
+      }
+    });
+
+    const saved = await actor.mutation(api.medications.createWithAssignment, {
+      ...baseMedication,
+      patientId,
+      name: "Magnesium",
+      slot: 4,
+      instructions: "",
+      scheduled: false,
+      supplyCount: 50,
+    });
+    expect(saved.slot).toBe(4);
+
+    const afterSave = await actor.query(api.patient.dashboard, {});
+    const afterRefresh = await actor.query(api.patient.dashboard, {});
+    const setup = await actor.query(api.caregiver.setup, {});
+
+    expect(afterSave.status).toBe("ready");
+    expect(afterSave.status === "ready" ? afterSave.medications : []).toEqual([
+      expect.objectContaining({
+        name: "Magnesium",
+        slot: 4,
+        supplyCount: 50,
+        localTime: null,
+      }),
+    ]);
+    expect(afterRefresh).toEqual(afterSave);
+    expect(setup.status === "ready" ? setup.medications : []).toEqual([
+      expect.objectContaining({ name: "Magnesium", slot: 4, localTime: null }),
+    ]);
+  });
+
   it("rejects reserved position 0", async () => {
     const { actor, patientId } = await createCareTeam("issuer|slot-zero");
 
@@ -58,7 +129,7 @@ describe("medication assignment security and validation", () => {
   });
 
   it("rejects a duplicate active slot assignment", async () => {
-    const { actor, patientId } = await createCareTeam("issuer|duplicate");
+    const { root, actor, patientId } = await createCareTeam("issuer|duplicate");
     await actor.mutation(api.medications.createWithAssignment, {
       ...baseMedication,
       patientId,
@@ -71,6 +142,14 @@ describe("medication assignment security and validation", () => {
         name: "Second medication",
       }),
     ).rejects.toThrow("Slot 6 already has an active medication assignment");
+
+    const medications = await root.run((ctx) =>
+      ctx.db
+        .query("medications")
+        .withIndex("by_patient", (q) => q.eq("patientId", patientId))
+        .collect(),
+    );
+    expect(medications.filter((medication) => medication.active)).toHaveLength(1);
   });
 
   it("denies signed-out reads and writes", async () => {

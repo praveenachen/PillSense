@@ -1,4 +1,5 @@
 import { query } from "./_generated/server";
+import { getActiveDeviceAssignments } from "./lib/activeDeviceAssignments";
 import { requireIdentity } from "./lib/requireIdentity";
 
 export const dashboard = query({
@@ -30,11 +31,18 @@ export const dashboard = query({
       }
       patient = pairedPatient;
     }
-    const assignments = await ctx.db
-      .query("compartmentAssignments")
+    const device = await ctx.db
+      .query("devices")
       .withIndex("by_patient", (q) => q.eq("patientId", patient._id))
-      .take(7);
-    const activeAssignments = assignments.filter((assignment) => assignment.active);
+      .unique();
+    if (!device) {
+      return { status: "unavailable" as const };
+    }
+    const activeAssignments = await getActiveDeviceAssignments(
+      ctx,
+      patient._id,
+      device._id,
+    );
     const rows = await Promise.all(
       activeAssignments.map(async (assignment) => {
         const medication = await ctx.db.get("medications", assignment.medicationId);
@@ -64,6 +72,8 @@ export const dashboard = query({
 
     return {
       status: "ready" as const,
+      patientId: patient._id,
+      deviceId: device._id,
       patientName: patient.displayName,
       isSynthetic: patient.isSynthetic,
       medications: rows

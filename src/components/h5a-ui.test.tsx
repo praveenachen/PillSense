@@ -303,6 +303,20 @@ describe("My Dispenser dark redesign", () => {
     for (const slot of [1, 2, 3, 4, 5, 6, 7]) expect(html).toContain(`aria-label="Select slot ${slot}"`);
   });
 
+  it("maps an unscheduled active medication into Slot 4", () => {
+    const html = renderToStaticMarkup(
+      <DispenserView
+        medications={[{ id: "magnesium", name: "Magnesium", instructions: "", slot: 4, localTime: null, supplyCount: 50 }]}
+        device={ready}
+        selectedSlot={4}
+        onSelectSlot={noop}
+        onOpenSetup={noop}
+      />,
+    );
+    expect(html).toContain("Magnesium");
+    expect(html).toContain("50 pills left");
+  });
+
   it("shows truthful home and empty-slot states without any patient motor action", () => {
     const empty = renderToStaticMarkup(<DispenserView medications={[medication]} device={ready} selectedSlot={2} onSelectSlot={noop} onOpenSetup={noop} synthetic={false} />);
     const home = renderToStaticMarkup(<DispenserView medications={[medication]} device={ready} selectedSlot={0} onSelectSlot={noop} onOpenSetup={noop} synthetic={false} />);

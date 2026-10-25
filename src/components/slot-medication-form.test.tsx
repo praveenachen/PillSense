@@ -1,9 +1,19 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { buildSlotMedicationInput, SlotMedicationForm } from "./slot-medication-form";
+import {
+  buildSlotMedicationInput,
+  claimMedicationSave,
+  SlotMedicationForm,
+} from "./slot-medication-form";
 import { parseMedicationScan } from "../lib/medication-scan";
 
 describe("mobile slot medication form", () => {
+  it("claims one save dispatch and suppresses duplicate clicks", () => {
+    const inFlight = { current: false };
+    expect(claimMedicationSave(inFlight)).toBe(true);
+    expect(claimMedicationSave(inFlight)).toBe(false);
+  });
+
   it("offers an enabled camera path in the slot picker", () => {
     const html = renderToStaticMarkup(<SlotMedicationForm slot={2} onCancel={() => undefined} />);
     expect(html).toContain("Scan with camera");

@@ -46,6 +46,33 @@ async function arm(data: Awaited<ReturnType<typeof dueDose>>, connectionId = "co
 }
 
 describe("H6C medication interaction sessions", () => {
+  it("does not skip synthetic Iron education when the hardware demo env flag is absent", async () => {
+    const data = await dueDose("issuer|iron-without-env", "Iron Pills");
+    vi.stubEnv("PILLSENSE_DEMO_ENVIRONMENT", "");
+    try {
+      const result = await readyByVoice(data);
+      expect(result).toMatchObject({ state: "AWAITING_EDUCATION_CHOICE", hardwareDispatchEligible: false });
+      expect(result.response).toContain("side effects");
+    } finally {
+      vi.stubEnv("PILLSENSE_DEMO_ENVIRONMENT", "development");
+    }
+  });
+
+  it.each(["AWAITING_CONTINUE", "READY_FOR_SUPERVISED_ROUTINE"] as const)("recovers skipped education in unattempted %s sessions without authorizing movement", async (state) => {
+    const data = await dueDose(`issuer|iron-legacy-${state}`, "Iron Pills");
+    const greeting = await data.caregiver.mutation(api.medicationSessions.claimGreeting, { occurrenceId: data.occurrenceId });
+    await data.root.run(async (ctx) => {
+      await ctx.db.patch("medicationInteractionSessions", greeting.session.id, { state, hardwareReadinessSource: "VOICE" });
+    });
+    const recovered = await data.caregiver.mutation(api.medicationSessions.respond, { occurrenceId: data.occurrenceId, intent: "READY", source: "VOICE" });
+    expect(recovered).toMatchObject({ state: "AWAITING_EDUCATION_CHOICE", hardwareDispatchEligible: false });
+    const explained = await data.caregiver.mutation(api.medicationSessions.respond, { occurrenceId: data.occurrenceId, intent: "YES", source: "VOICE" });
+    expect(explained.response).toContain("Any questions?");
+    expect(explained.hardwareDispatchEligible).toBe(false);
+    const commands = await data.root.run((ctx) => ctx.db.query("dispenseCommands").take(10));
+    expect(commands).toHaveLength(0);
+  });
+
   it("offers sourced Iron Pills side effects before voice movement and never reopens a completed attempt", async () => {
     const data = await dueDose("issuer|iron-education-demo", "Iron Pills");
     const connectionId = await arm(data);
@@ -53,8 +80,14 @@ describe("H6C medication interaction sessions", () => {
     expect(offered).toMatchObject({ state: "AWAITING_EDUCATION_CHOICE", hardwareDispatchEligible: false });
     expect(offered.response).toContain("side effects of Iron Pills");
     const explained = await data.caregiver.mutation(api.medicationSessions.respond, { occurrenceId: data.occurrenceId, intent: "YES", source: "VOICE" });
-    expect(explained).toMatchObject({ state: "AWAITING_CONTINUE", hardwareDispatchEligible: false, educationSourceUrl: "https://medlineplus.gov/druginfo/meds/a682778.html" });
+    expect(explained).toMatchObject({ state: "AWAITING_SUPPLY_CHOICE", hardwareDispatchEligible: false, educationSourceUrl: "https://medlineplus.gov/druginfo/meds/a682778.html" });
     expect(explained.response).toContain("constipation");
+    expect(explained.response.endsWith("Any questions?")).toBe(true);
+    const hasQuestion = await data.caregiver.mutation(api.medicationSessions.respond, { occurrenceId: data.occurrenceId, intent: "YES", source: "VOICE" });
+    expect(hasQuestion).toMatchObject({ state: "AWAITING_SUPPLY_CHOICE", hardwareDispatchEligible: false, response: "What would you like to know?" });
+    const supply = await data.caregiver.mutation(api.medicationSessions.respond, { occurrenceId: data.occurrenceId, intent: "REQUEST_SUPPLY_INFORMATION", source: "VOICE" });
+    expect(supply).toMatchObject({ state: "AWAITING_CONTINUE", hardwareDispatchEligible: false });
+    expect(supply.response.endsWith("Are you ready to dispense your medication?")).toBe(true);
     const ready = await data.caregiver.mutation(api.medicationSessions.respond, { occurrenceId: data.occurrenceId, intent: "READY", source: "VOICE" });
     expect(ready.hardwareDispatchEligible).toBe(true);
     const informationOnly = await data.caregiver.mutation(api.medicationSessions.respond, { occurrenceId: data.occurrenceId, intent: "REQUEST_MORE_INFORMATION", source: "VOICE" });
@@ -78,6 +111,37 @@ describe("H6C medication interaction sessions", () => {
     expect(paused).toMatchObject({ state: "DECLINED", hardwareDispatchEligible: false });
   });
 
+  it("answers a supply question from this patient's saved inventory without dispatching or changing it", async () => {
+    const data = await dueDose("issuer|supply-question", "Iron Pills");
+    await readyByVoice(data);
+    const assignmentId = await data.root.run(async (ctx) => {
+      const assignment = await ctx.db.query("compartmentAssignments").withIndex("by_device_and_slot", (q) => q.eq("deviceId", data.setup.device.id).eq("slot", 6)).first();
+      if (!assignment) throw new Error("Missing assignment");
+      await ctx.db.patch("compartmentAssignments", assignment._id, { estimatedSupplyCount: 12, supplyEstimateSource: "SYNTHETIC_DEMO" });
+      return assignment._id;
+    });
+    const response = await data.caregiver.mutation(api.medicationSessions.respond, { occurrenceId: data.occurrenceId, intent: "REQUEST_SUPPLY_INFORMATION", source: "VOICE" });
+    expect(response).toMatchObject({ state: "AWAITING_CONTINUE", hardwareDispatchEligible: false });
+    expect(response.response).toContain("12 pills");
+    expect(response.response).toContain("supply may run out around");
+    expect(response.response).toContain("not a prescription end date");
+    expect(response.response.endsWith("Are you ready to dispense your medication?")).toBe(true);
+    const evidence = await data.root.run(async (ctx) => ({ assignment: await ctx.db.get("compartmentAssignments", assignmentId), commands: await ctx.db.query("dispenseCommands").take(10) }));
+    expect(evidence.assignment?.estimatedSupplyCount).toBe(12);
+    expect(evidence.commands).toHaveLength(0);
+    const other = data.root.withIdentity({ tokenIdentifier: "issuer|unrelated-supply-reader" });
+    await expect(other.mutation(api.medicationSessions.respond, { occurrenceId: data.occurrenceId, intent: "REQUEST_SUPPLY_INFORMATION", source: "VOICE" })).rejects.toThrow();
+  });
+
+  it("does not invent a runout date when inventory is unknown", async () => {
+    const data = await dueDose("issuer|unknown-supply", "Iron Pills");
+    await readyByVoice(data);
+    const response = await data.caregiver.mutation(api.medicationSessions.respond, { occurrenceId: data.occurrenceId, intent: "REQUEST_SUPPLY_INFORMATION", source: "VOICE" });
+    expect(response.hardwareDispatchEligible).toBe(false);
+    expect(response.response).toContain("don’t have enough saved inventory");
+    expect(response.response).not.toContain("run out around");
+  });
+
   it("claims a personalized greeting once across refreshes", async () => {
     const data = await dueDose("issuer|h6c-session");
     const first = await data.caregiver.mutation(api.medicationSessions.claimGreeting, { occurrenceId: data.occurrenceId });
@@ -93,8 +157,9 @@ describe("H6C medication interaction sessions", () => {
     const educationOffer = await data.caregiver.mutation(api.medicationSessions.respond, { occurrenceId: data.occurrenceId, intent: "YES", source: "TEXT" });
     expect(educationOffer.state).toBe("AWAITING_EDUCATION_CHOICE");
     const education = await data.caregiver.mutation(api.medicationSessions.respond, { occurrenceId: data.occurrenceId, intent: "YES", source: "TEXT" });
-    expect(education.state).toBe("AWAITING_CONTINUE");
+    expect(education.state).toBe("AWAITING_SUPPLY_CHOICE");
     expect(education.response).toContain("MedlinePlus");
+    await data.caregiver.mutation(api.medicationSessions.respond, { occurrenceId: data.occurrenceId, intent: "NO", source: "TEXT" });
     const ready = await data.caregiver.mutation(api.medicationSessions.respond, { occurrenceId: data.occurrenceId, intent: "YES", source: "TEXT" });
     expect(ready.state).toBe("READY_FOR_SUPERVISED_ROUTINE");
     await data.caregiver.mutation(api.medicationSessions.setCameraConsent, { occurrenceId: data.occurrenceId, consent: true });

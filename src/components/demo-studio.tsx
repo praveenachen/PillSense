@@ -16,8 +16,9 @@ import { getDemoPanelStates, type DemoTabId } from "@/lib/demo-navigation";
 export function DemoStudio({ authUiConfigured }: { authUiConfigured: boolean }) {
   const [activeTab, setActiveTab] = useState<DemoTabId>("today");
   const [setupOpen, setSetupOpen] = useState(false);
-  const [voiceRequest, setVoiceRequest] = useState<{ occurrenceId: string; token: number } | null>(null);
+  const [voiceRequest, setVoiceRequest] = useState<{ occurrenceId: string; token: number; requestedAt: number } | null>(null);
   const scrollAreaRef = useRef<HTMLElement>(null);
+  const voiceRequestToken = useRef(0);
   const panels = getDemoPanelStates(activeTab);
 
   const selectTab = useCallback((tab: DemoTabId) => {
@@ -27,9 +28,12 @@ export function DemoStudio({ authUiConfigured }: { authUiConfigured: boolean }) 
   const closeSetup = useCallback(() => setSetupOpen(false), []);
   const goDispenser = useCallback(() => selectTab("dispenser"), [selectTab]);
   const goSchedule = useCallback(() => selectTab("schedule"), [selectTab]);
-  const goVoice = useCallback(() => selectTab("voice"), [selectTab]);
+  const goVoice = useCallback(() => {
+    setVoiceRequest(null);
+    selectTab("voice");
+  }, [selectTab]);
   const goScheduledVoice = useCallback((occurrenceId: string) => {
-    setVoiceRequest((current) => ({ occurrenceId, token: (current?.token ?? 0) + 1 }));
+    setVoiceRequest({ occurrenceId, token: ++voiceRequestToken.current, requestedAt: Date.now() });
     selectTab("voice");
   }, [selectTab]);
 
@@ -92,7 +96,7 @@ export function DemoStudio({ authUiConfigured }: { authUiConfigured: boolean }) 
                     : <ConfigurationRequired />
                 )}
                 {panel.id === "voice" && (
-                  authUiConfigured ? <VoiceCompanion active={activeTab === "voice"} startRequest={voiceRequest} /> : <ConfigurationRequired />
+                  authUiConfigured ? <VoiceCompanion demoMode active={activeTab === "voice"} startRequest={voiceRequest} /> : <ConfigurationRequired />
                 )}
                 {panel.id === "schedule" && (
                   authUiConfigured ? <ScheduleScreen /> : <ConfigurationRequired dark />

@@ -54,6 +54,52 @@ describe("H6C development demo CLI backend", () => {
     expect(audit.every((run) => run.status === "RESET")).toBe(true);
   });
 
+  it("seeds one currently due Iron Pills reminder for Home without arming or dispatching hardware", async () => {
+    const root = convexTest(schema, modules);
+    const actor = root.withIdentity({ tokenIdentifier, name: "Demo Caregiver" });
+    const first = await actor.mutation(api.demoCli.seed, { prepareVoiceReminder: true });
+    const second = await actor.mutation(api.demoCli.seed, { prepareVoiceReminder: true });
+    expect(first.voiceReminder).toMatchObject({ status: "READY", slot: 6 });
+    expect(second.voiceReminder?.occurrenceId).toBe(first.voiceReminder?.occurrenceId);
+    const listed = await actor.query(api.occurrences.listForPatient, { now: Date.now() });
+    const dose = listed.occurrences.find((row) => row.id === first.voiceReminder?.occurrenceId);
+    expect(dose).toMatchObject({ medicationName: "Iron Pills", slot: 6, attemptStatus: "NONE", ingestionReport: "UNREPORTED" });
+    expect(dose!.eligibleFrom).toBeLessThanOrEqual(Date.now());
+    expect(dose!.expiresAt).toBeGreaterThan(Date.now());
+    const evidence = await root.run(async (ctx) => ({
+      runs: await ctx.db.query("demoScenarioRuns").take(10),
+      commands: await ctx.db.query("dispenseCommands").take(10),
+      arms: await ctx.db.query("hardwareDemoArms").take(10),
+    }));
+    expect(evidence.runs).toHaveLength(1);
+    expect(evidence.commands).toHaveLength(0);
+    expect(evidence.arms).toHaveLength(0);
+  });
+
+  it("refreshes only an expired unattempted seeded reminder while retaining its audit history", async () => {
+    const root = convexTest(schema, modules);
+    const actor = root.withIdentity({ tokenIdentifier, name: "Demo Caregiver" });
+    const first = await actor.mutation(api.demoCli.seed, { prepareVoiceReminder: true });
+    const oldId = first.voiceReminder!.occurrenceId!;
+    await root.run((ctx) => ctx.db.patch("doseOccurrences", oldId, { expiresAt: Date.now() - 1 }));
+    const refreshed = await actor.mutation(api.demoCli.seed, { prepareVoiceReminder: true });
+    expect(refreshed.voiceReminder?.status).toBe("READY");
+    expect(refreshed.voiceReminder?.occurrenceId).not.toBe(oldId);
+    const old = await root.run((ctx) => ctx.db.get("doseOccurrences", oldId));
+    expect(old?.reminderState).toBe("RESOLVED");
+  });
+
+  it.each(["COMPLETED", "UNKNOWN"] as const)("does not replace a %s hardware attempt when seeding the voice reminder", async (attemptStatus) => {
+    const root = convexTest(schema, modules);
+    const actor = root.withIdentity({ tokenIdentifier, name: "Demo Caregiver" });
+    const first = await actor.mutation(api.demoCli.seed, { prepareVoiceReminder: true });
+    const oldId = first.voiceReminder!.occurrenceId!;
+    await root.run((ctx) => ctx.db.patch("doseOccurrences", oldId, { attemptStatus, expiresAt: Date.now() - 1 }));
+    const repeated = await actor.mutation(api.demoCli.seed, { prepareVoiceReminder: true });
+    expect(repeated.voiceReminder).toMatchObject({ status: "ALREADY_ATTEMPTED", occurrenceId: oldId });
+    expect(await root.run((ctx) => ctx.db.query("demoScenarioRuns").take(10))).toHaveLength(1);
+  });
+
   it("creates the successful-dose reminder for the fixed Slot 6 Iron Pills hardware fixture", async () => {
     const root = convexTest(schema, modules);
     const actor = root.withIdentity({ tokenIdentifier, name: "Demo Caregiver" });

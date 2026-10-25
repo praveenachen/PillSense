@@ -10,9 +10,16 @@ describe("scheduled reminder prompts", () => {
   });
   it("resumes education and hardware states instead of presenting a fresh readiness prompt", () => {
     expect(reminderPrompt({ ...session, state: "AWAITING_EDUCATION_CHOICE" })).toContain("side effects");
-    expect(reminderPrompt({ ...session, state: "AWAITING_CONTINUE" })).toContain("continue");
+    expect(reminderPrompt({ ...session, state: "AWAITING_SUPPLY_CHOICE" })).toBe("Any questions?");
+    expect(reminderPrompt({ ...session, state: "AWAITING_CONTINUE" })).toBe("Are you ready to dispense your medication?");
     for (const state of ["MOVEMENT_IN_PROGRESS", "AWAITING_PATIENT_REPORT", "COMPLETED", "DECLINED", "HARDWARE_UNKNOWN"]) {
       expect(reminderPrompt({ ...session, state })).not.toContain("Are you ready");
     }
+  });
+  it("greets on an explicit orb opening without resetting a completed movement", () => {
+    const prompt = reminderPrompt({ ...session, state: "AWAITING_PATIENT_REPORT" }, true);
+    expect(prompt).toContain("Hello Praveena!");
+    expect(prompt).toContain("motor sequence has finished");
+    expect(prompt).not.toContain("Are you ready");
   });
 });

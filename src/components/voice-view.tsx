@@ -25,6 +25,7 @@ export type VoiceViewProps = {
   nothingCaptured: boolean;
   onDismissNothing: () => void;
   onToggleListening: () => void;
+  onStartConversation?: () => void;
   onReplay: () => void;
   onStopSpeaking: () => void;
   onCancelAll: () => void;
@@ -63,7 +64,7 @@ export function VoiceView(props: VoiceViewProps) {
         ? "Getting voice ready..."
         : connection === "TEXT_ONLY"
           ? "Voice unavailable"
-          : phase === "LISTENING" ? "I’m listening." : "Tap to talk";
+          : "I’m listening.";
   const support = phase === "PROCESSING"
     ? "Processing your last request."
     : phase === "SPEAKING"
@@ -72,7 +73,7 @@ export function VoiceView(props: VoiceViewProps) {
         ? "Cartesia voice isn’t configured on the server. Use Type instead from the menu."
         : connection === "CHECKING"
           ? ""
-          : phase === "LISTENING" ? "Tell me what you need, or just talk naturally." : "Start a conversation or open a medication reminder.";
+          : "Tell me what you need, or just talk naturally.";
   const visualState = error ? "error" : phase.toLowerCase();
   const latestAssistant = [...conversation].reverse().find((message) => message.role === "assistant")?.text ?? caption;
   const latestUser = [...conversation].reverse().find((message) => message.role === "user")?.text ?? transcript;
@@ -123,9 +124,9 @@ export function VoiceView(props: VoiceViewProps) {
         )}
         <button
           type="button"
-          onClick={props.onToggleListening}
+          onClick={phase === "IDLE" && props.onStartConversation ? props.onStartConversation : props.onToggleListening}
           disabled={orbDisabled}
-          aria-label={phase === "LISTENING" ? "Stop recording and transcribe" : "Start push-to-talk recording, maximum 10 seconds"}
+          aria-label={phase === "LISTENING" ? "Stop recording and transcribe" : props.onStartConversation ? "Start medication conversation" : "Start push-to-talk recording, maximum 10 seconds"}
           className={`${glFailed ? `pd-voice-orb pd-voice-orb--${visualState}` : "pd-voice-hit"} pd-focus relative size-40 rounded-full disabled:cursor-not-allowed`}
         >
           {glFailed && (

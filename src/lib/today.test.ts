@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildTodayTimeline, compactDoseLine, countdownLabel, firstName, greetingFor, pickNextDose, type DoseOccurrence, type ScheduledMedication } from "./today";
+import { buildTodayTimeline, compactDoseLine, countdownLabel, firstName, greetingFor, pickNextDose, pickHomeMedication, type DoseOccurrence, type ScheduledMedication } from "./today";
 
 const NOW = new Date(2026, 9, 23, 9, 0, 0).getTime(); // a Friday, 9:00 local
 const at = (h: number, m = 0) => new Date(2026, 9, 23, h, m, 0).getTime();
@@ -20,6 +20,12 @@ function occurrence(partial: Partial<DoseOccurrence> & Pick<DoseOccurrence, "id"
 }
 
 describe("today timeline", () => {
+  it("keeps a selected eligible reminder on the card when its scheduled date is outside today's timeline", () => {
+    const due = occurrence({ id: "iron-midnight", medicationName: "Iron Pills", slot: 6, scheduledFor: NOW - 24 * 60 * 60_000 });
+    const rows = buildTodayTimeline(meds, [], NOW);
+    expect(pickHomeMedication(rows, due)).toMatchObject({ occurrenceId: "iron-midnight", medicationName: "Iron Pills", slot: 6 });
+    expect(pickHomeMedication(rows)?.medicationName).toBe("Metformin");
+  });
   it("lists only today's weekday schedules in time order", () => {
     const rows = buildTodayTimeline(meds, [], NOW);
     expect(rows.map((row) => row.medicationName)).toEqual(["Vitamin D", "Metformin", "Lisinopril"]);

@@ -165,6 +165,7 @@ export function DispenserView({ medications, device, selectedSlot, onSelectSlot,
         </ol>
       </section>
 
+      {onVerify && <p className="px-1 text-xs leading-5 text-pd-muted">Ready confirms an empty/inert carousel, manual Slot 0 alignment, and clear moving parts.</p>}
       {setupBusy && <p role="status" className="px-1 text-xs text-pd-muted">Connecting to your dispenser…</p>}
       {setupError && <p role="alert" className="rounded-pd-chip bg-red-500/10 p-3 text-sm text-red-300">{setupError}</p>}
 

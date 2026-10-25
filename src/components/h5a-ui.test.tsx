@@ -26,11 +26,17 @@ describe("Today screen dark revamp", () => {
 
   it("shows an actionable scheduled reminder on Home only when a due occurrence is provided", () => {
     const props = { greeting: "Hello", name: "Praveena", now, device, nextDose: null, timeline: [], onOpenReminder: () => undefined };
-    const due = renderToStaticMarkup(<TodayView {...props} dueReminder={{ id: "dose-6", medicationName: "Iron Pills" }} />);
+    const due = renderToStaticMarkup(<TodayView {...props} nextDose={row({ occurrenceId: "dose-6", medicationName: "Iron Pills", slot: 6, at: now })} dueReminder={{ id: "dose-6", medicationName: "Iron Pills" }} />);
     expect(due).toContain('aria-label="Start reminder for Iron Pills"');
-    expect(due).toContain("Tap to talk with PillSense");
+    expect(due).not.toContain("Tap to talk");
+    expect(due.match(/aria-label="Start reminder for Iron Pills"/g)).toHaveLength(1);
+    expect(due).not.toContain(">Medication reminder<");
     const empty = renderToStaticMarkup(<TodayView {...props} />);
     expect(empty).not.toContain("Medication reminder");
+    const active = renderToStaticMarkup(<TodayView {...props} nextDose={row({ occurrenceId: "dose-6", medicationName: "Iron Pills", slot: 6, at: now, state: "NEEDS_CONFIRMATION" })} dueReminder={{ id: "dose-6", medicationName: "Iron Pills" }} />);
+    expect(active).toContain("Medication due");
+    expect(active).toContain("Due now");
+    expect(active).toContain("Slot 6 is highlighted");
   });
 
   it("shows a countdown only for a real upcoming dose and highlights that slot", () => {
@@ -231,8 +237,8 @@ describe("Voice Companion dark redesign", () => {
     expect(idle).toContain('data-voice-state="idle"');
     expect(idle).not.toContain(">End<");
     expect(idle).not.toContain("No transcript yet.");
-    expect(idle).toContain("Tap to talk");
-    expect(idle).toContain("Start a conversation or open a medication reminder.");
+    expect(idle).toContain("I’m listening.");
+    expect(idle).toContain("Tell me what you need, or just talk naturally.");
     expect(idle).not.toContain("Tap the orb");
     expect(idle).not.toContain("Press once");
     expect(idle).not.toContain("Try saying");
@@ -240,6 +246,14 @@ describe("Voice Companion dark redesign", () => {
     expect(listening).toContain('aria-label="End"');
     expect(processing).toContain("Thinking...");
     expect(speaking).toContain("PillSense is speaking.");
+  });
+
+  it("uses the visual orb to start a scheduled conversation without a separate top button", () => {
+    const html = renderToStaticMarkup(<VoiceView {...voiceProps()} onStartConversation={() => undefined} />);
+    expect(html).toContain('aria-label="Start medication conversation"');
+    expect(html).toContain("I’m listening.");
+    expect(html).not.toContain("Tap to talk");
+    expect(html).not.toContain("Talk about Iron Pills");
   });
 
   it("renders only real conversation entries with contextual playback controls", () => {

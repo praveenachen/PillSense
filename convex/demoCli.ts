@@ -303,18 +303,51 @@ async function createDoseScenario(
   };
 }
 
+async function ensureSeededVoiceReminder(ctx: MutationCtx, team: Awaited<ReturnType<typeof ensureTeam>>) {
+  const now = Date.now();
+  const runs = await ctx.db.query("demoScenarioRuns")
+    .withIndex("by_patient_and_status", (q) => q.eq("patientId", team.patient._id).eq("status", "ACTIVE"))
+    .order("desc").take(50);
+  for (const run of runs) {
+    if (run.scenario !== "DUE_REMINDER" || !run.occurrenceId) continue;
+    const occurrence = await ctx.db.get("doseOccurrences", run.occurrenceId);
+    if (!occurrence) continue;
+    const medication = await ctx.db.get("medications", occurrence.medicationId);
+    if (medication?.demoSeedKey !== IRON_PILLS.key) continue;
+    const command = await ctx.db.query("dispenseCommands")
+      .withIndex("by_occurrence", (q) => q.eq("occurrenceId", occurrence._id)).unique();
+    // Re-seeding must never manufacture a new attempt after movement or a report.
+    if (command || occurrence.commandId || occurrence.attemptStatus !== "NONE" || occurrence.ingestionReport !== "UNREPORTED") {
+      return { status: "ALREADY_ATTEMPTED" as const, occurrenceId: occurrence._id, slot: 6 };
+    }
+    if (occurrence.expiresAt > now && occurrence.reminderState !== "RESOLVED") {
+      return { status: "READY" as const, occurrenceId: occurrence._id, slot: 6 };
+    }
+    await resolveDemoOccurrence(ctx, occurrence, now);
+    await ctx.db.patch("demoScenarioRuns", run._id, { status: "RESET", resetAt: now });
+  }
+  const dose = await createDoseScenario(ctx, team, "DUE_REMINDER");
+  return { status: "READY" as const, occurrenceId: dose.occurrenceId, slot: 6 };
+}
+
 export const seed = mutation({
-  args: {},
-  handler: async (ctx) => {
+  args: { prepareVoiceReminder: v.optional(v.boolean()) },
+  handler: async (ctx, args) => {
     const team = await ensureTeam(ctx);
     const { retired, conflicts } = await seedBaseline(ctx, team);
     const settings = await ctx.db.query("reminderSettings").withIndex("by_patient", (q) => q.eq("patientId", team.patient._id)).unique();
     const value = { upcomingWindowMinutes: 60, followUpWindowMinutes: 5, updatedBy: team.caregiver._id, updatedAt: Date.now() };
     if (settings) await ctx.db.patch("reminderSettings", settings._id, value);
     else await ctx.db.insert("reminderSettings", { patientId: team.patient._id, ...value });
+    const voiceReminder = args.prepareVoiceReminder
+      ? conflicts.some((row) => row.slot === 6)
+        ? { status: "SLOT_CONFLICT" as const, occurrenceId: null, slot: 6 }
+        : await ensureSeededVoiceReminder(ctx, team)
+      : null;
     return {
       seeded: conflicts.length === 0, patientReady: true, caregiverReady: true, primarySlot: ADVIL.slot,
       retiredObsoleteFixtures: retired,
+      voiceReminder,
       // Occupied slots are reported, never overwritten. Resolve them with npm run demo:prepare-final.
       slotConflicts: conflicts.map((row) => ({ slot: row.slot, medication: row.medicationName, scannedOrUserEntered: row.scannedOrUserEntered })),
     };

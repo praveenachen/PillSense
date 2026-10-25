@@ -7,11 +7,12 @@ import { api } from "../../convex/_generated/api";
 import { AuthRequired } from "./auth-required";
 import { RefillBell } from "./refill-bell";
 import { TodayView, type TodayDevice } from "./today-view";
+import { useArduinoGateway } from "./arduino-gateway-provider";
 import {
   buildTodayTimeline,
   firstName,
   greetingFor,
-  pickNextDose,
+  pickHomeMedication,
   type DoseOccurrence,
   type ScheduledMedication,
 } from "@/lib/today";
@@ -52,6 +53,7 @@ const runtimeLabels: Record<string, string> = {
 
 function AuthenticatedToday({ account, onOpenDispenser, onOpenSchedule, onOpenVoice, onOpenReminder }: TodayScreenProps) {
   const { user } = useUser();
+  const gateway = useArduinoGateway();
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 60_000);
@@ -89,11 +91,15 @@ function AuthenticatedToday({ account, onOpenDispenser, onOpenSchedule, onOpenVo
   }
 
   const rows = timeline ?? [];
-  const nextDose = pickNextDose(rows);
   const signedInName = firstName(user?.fullName ?? user?.firstName ?? dashboard.patientName);
   const device = doses?.device;
-  const dueReminder = doses?.occurrences.find((dose) => dose.ingestionReport === "UNREPORTED" && dose.attemptStatus === "NONE" && now >= dose.eligibleFrom && now <= dose.expiresAt);
-  const deviceView: TodayDevice = !device
+  const dueReminders = doses?.occurrences.filter((dose) => dose.ingestionReport === "UNREPORTED" && dose.attemptStatus === "NONE" && dose.eligibility !== "STALE" && now >= dose.eligibleFrom && now <= dose.expiresAt) ?? [];
+  const dueReminder = (dashboard.isSynthetic ? dueReminders.find((dose) => dose.mode === "demo" && dose.slot === 6) : undefined) ?? dueReminders[0];
+  const nextDose = pickHomeMedication(rows, dueReminder ? { ...dueReminder, instructions: dueReminder.instructions ?? "" } : undefined);
+  const liveConnected = gateway.connected && gateway.isConnected();
+  const deviceView: TodayDevice = dashboard.isSynthetic
+    ? { label: "Dispenser", detail: gateway.reportedStatus ?? "Open My Dispenser to pair Bluetooth", tone: liveConnected ? "ready" : "idle", connected: liveConnected }
+    : !device
     ? { label: "Dispenser", detail: "Open My Dispenser to pair Bluetooth", tone: "idle", connected: false }
     : { label: "Demo Dispenser", detail: runtimeLabels[device.state] ?? device.state.toLowerCase().replaceAll("_", " "), tone: device.connected && device.state === "READY" ? "ready" : "attention", connected: device.connected };
   return (

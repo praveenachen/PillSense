@@ -5,7 +5,7 @@ export type VoiceIntent =
   | { type: "AMBIGUOUS"; reason: string }
   | { type: "UNSUPPORTED" };
 
-export type MedicationSessionIntent = "YES" | "READY" | "NO" | "REPEAT" | "REQUEST_MORE_INFORMATION";
+export type MedicationSessionIntent = "YES" | "READY" | "NO" | "REPEAT" | "REQUEST_MORE_INFORMATION" | "REQUEST_SUPPLY_INFORMATION";
 
 function normalized(text: string) {
   return text.toLowerCase().replace(/[’']/g, "'").replace(/[^a-z0-9' ]/g, " ").replace(/\s+/g, " ").trim();
@@ -42,5 +42,6 @@ export function parseMedicationSessionIntent(text: string): MedicationSessionInt
   if (/^(no|no thanks|not now|stop|decline)$/.test(value)) return "NO";
   if (/^(repeat|say that again|repeat that)$/.test(value)) return "REPEAT";
   if (/^(more information|tell me more|more info|what else|side effects|tell me about side effects|what are the side effects)$/.test(value)) return "REQUEST_MORE_INFORMATION";
+  if (/^(when does my prescription (finish|end)|when (does|will) my (medication|medicine|supply|pills|prescription) run out|how (long|many days) (will|does) my (medication|medicine|supply|prescription) last|when will i run out|how many pills (are left|do i have left))$/.test(value)) return "REQUEST_SUPPLY_INFORMATION";
   return null;
 }

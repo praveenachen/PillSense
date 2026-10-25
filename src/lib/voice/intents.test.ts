@@ -27,4 +27,7 @@ describe("voice intent parser", () => {
   it("recognizes a side-effect education request without treating it as readiness", () => {
     expect(parseMedicationSessionIntent("What are the side effects?")).toBe("REQUEST_MORE_INFORMATION");
   });
+  it.each(["When does my prescription finish?", "When does my prescription end?", "When will my pills run out?", "How many pills do I have left?"])("recognizes the read-only supply question %s", (phrase) => {
+    expect(parseMedicationSessionIntent(phrase)).toBe("REQUEST_SUPPLY_INFORMATION");
+  });
 });

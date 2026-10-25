@@ -594,6 +594,7 @@ export default defineSchema({
     state: v.union(
       v.literal("AWAITING_READINESS"),
       v.literal("AWAITING_EDUCATION_CHOICE"),
+      v.literal("AWAITING_SUPPLY_CHOICE"),
       v.literal("AWAITING_CONTINUE"),
       v.literal("READY_FOR_SUPERVISED_ROUTINE"),
       v.literal("PREPARING_DISPENSER"),
@@ -650,6 +651,7 @@ export default defineSchema({
         v.literal("NO"),
         v.literal("REPEAT"),
         v.literal("REQUEST_MORE_INFORMATION"),
+        v.literal("REQUEST_SUPPLY_INFORMATION"),
       ),
     ),
     detailCode: v.optional(v.string()),

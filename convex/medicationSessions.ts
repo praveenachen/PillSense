@@ -4,6 +4,7 @@ import type { MutationCtx } from "./_generated/server";
 import { env, mutation, query } from "./_generated/server";
 import { requirePatientAccess } from "./lib/authorization";
 import { educationForMedication } from "./lib/medicationEducation";
+import { buildSupplyForecast } from "./lib/refillForecast";
 
 const intentValidator = v.union(
   v.literal("YES"),
@@ -11,6 +12,7 @@ const intentValidator = v.union(
   v.literal("NO"),
   v.literal("REPEAT"),
   v.literal("REQUEST_MORE_INFORMATION"),
+  v.literal("REQUEST_SUPPLY_INFORMATION"),
 );
 const sourceValidator = v.union(v.literal("VOICE"), v.literal("TEXT"));
 
@@ -149,14 +151,32 @@ export const recordGreetingOutcome = mutation({
   },
 });
 
+async function recordedSupplySummary(ctx: MutationCtx, occurrence: Doc<"doseOccurrences">, now: number) {
+  const device = await ctx.db.query("devices").withIndex("by_patient", (q) => q.eq("patientId", occurrence.patientId)).unique();
+  const assignments = await ctx.db.query("compartmentAssignments").withIndex("by_medication", (q) => q.eq("medicationId", occurrence.medicationId)).take(10);
+  const assignment = assignments.find((row) => row.active && row.patientId === occurrence.patientId && row.deviceId === device?._id);
+  const schedules = (await ctx.db.query("medicationSchedules").withIndex("by_medication", (q) => q.eq("medicationId", occurrence.medicationId)).take(32))
+    .filter((row) => row.active && row.patientId === occurrence.patientId);
+  const count = assignment?.estimatedSupplyCount ?? null;
+  const forecast = buildSupplyForecast({ now, supplyCount: count, source: assignment?.supplyEstimateSource ?? null, schedules });
+  if (count === null || forecast.estimatedRunOutAt === null) return "I don’t have enough saved inventory and schedule information to estimate when your supply will run out. Your caregiver can update those records. A prescription end date should be confirmed with your prescriber.";
+  if (count === 0) return "Your recorded supply estimate is zero. Ask your caregiver to check the remaining supply. That does not tell me when your prescription should end.";
+  const date = new Intl.DateTimeFormat("en-US", { month: "long", day: "numeric", timeZone: schedules[0]?.timezone ?? "UTC" }).format(forecast.estimatedRunOutAt);
+  return `Your recorded supply estimate is ${count} pills. Based on your saved schedule, that supply may run out around ${date}. This is an inventory estimate, not a prescription end date.`;
+}
+
 export const respond = mutation({
   args: { occurrenceId: v.id("doseOccurrences"), intent: intentValidator, source: sourceValidator },
   handler: async (ctx, args) => {
     const now = Date.now();
     const { session, medication, occurrence, patient } = await ensureSession(ctx, args.occurrenceId, now);
     const education = educationForMedication(medication);
-    const ironDemoEducation = patient.isSynthetic && env.PILLSENSE_DEMO_ENVIRONMENT === "development" && education?.code === "MEDLINEPLUS_IRON";
+    // Conversation education must not depend on the hardware-enabling env flag.
+    // Hardware authorization below still requires the configured development mode.
+    const ironDemoEducation = patient.isSynthetic && education?.code === "MEDLINEPLUS_IRON";
     const educationOffer = `Before we continue, would you like to hear about possible side effects of ${medication.name}?`;
+    const questionsPrompt = "Any questions?";
+    const dispensePrompt = "Are you ready to dispense your medication?";
     let next = session.state;
     let response: string;
     let eventType: Doc<"medicationInteractionEvents">["type"] = "PATIENT_INTENT";
@@ -172,14 +192,31 @@ export const respond = mutation({
       occurrence.attemptStatus === "NONE" &&
       !occurrence.commandId;
 
-    if (args.intent === "READY") {
+    // Recover old, unattempted demo sessions that the previous READY shortcut
+    // advanced without offering education. Never rewind an attempted operation.
+    const history = ironDemoEducation && ["AWAITING_CONTINUE", "READY_FOR_SUPERVISED_ROUTINE"].includes(session.state)
+      ? await ctx.db.query("medicationInteractionEvents")
+        .withIndex("by_session_and_occurredAt", (q) => q.eq("sessionId", session._id)).take(100)
+      : [];
+    const recoverSkippedEducation = ironDemoEducation &&
+      ["AWAITING_CONTINUE", "READY_FOR_SUPERVISED_ROUTINE"].includes(session.state) &&
+      occurrence.attemptStatus === "NONE" && !occurrence.commandId &&
+      !history.some((event) => event.type === "EDUCATION_PRESENTED" || event.intent === "NO");
+
+    if ((args.intent === "READY" || args.intent === "YES") && recoverSkippedEducation) {
+      next = "AWAITING_EDUCATION_CHOICE";
+      response = educationOffer;
+    } else if (args.intent === "READY") {
       if (session.state === "AWAITING_READINESS" && ironDemoEducation) {
         next = "AWAITING_EDUCATION_CHOICE";
         response = educationOffer;
-      } else if (session.state === "AWAITING_EDUCATION_CHOICE" && ironDemoEducation && education) {
-        next = "AWAITING_CONTINUE";
+      } else if (session.state === "AWAITING_EDUCATION_CHOICE" && education) {
+        next = "AWAITING_SUPPLY_CHOICE";
         eventType = "EDUCATION_PRESENTED";
-        response = `${education.spokenSummary} Are you ready to continue?`;
+        response = `${education.spokenSummary} ${questionsPrompt}`;
+      } else if (session.state === "AWAITING_SUPPLY_CHOICE") {
+        next = "AWAITING_CONTINUE";
+        response = dispensePrompt;
       } else if (["AWAITING_READINESS", "AWAITING_EDUCATION_CHOICE", "AWAITING_CONTINUE"].includes(session.state)) {
         next = "READY_FOR_SUPERVISED_ROUTINE";
         eventType = "ROUTINE_READY";
@@ -192,22 +229,27 @@ export const respond = mutation({
         response = "This medication session already has a terminal or in-progress hardware state. No new movement command was created.";
       }
     } else if (args.intent === "REPEAT") {
-      response = session.state === "AWAITING_CONTINUE" && education
-        ? `${education.spokenSummary} Would you like to continue with your scheduled medication routine?`
-        : session.state === "AWAITING_EDUCATION_CHOICE" ? educationOffer : "Please answer yes or no to the current question.";
+      response = session.state === "AWAITING_CONTINUE"
+        ? dispensePrompt
+        : session.state === "AWAITING_EDUCATION_CHOICE" ? educationOffer
+          : session.state === "AWAITING_SUPPLY_CHOICE" ? questionsPrompt : "Please answer yes or no to the current question.";
+    } else if (args.intent === "REQUEST_SUPPLY_INFORMATION") {
+      const canContinue = ["AWAITING_READINESS", "AWAITING_EDUCATION_CHOICE", "AWAITING_SUPPLY_CHOICE", "AWAITING_CONTINUE"].includes(session.state);
+      response = `${await recordedSupplySummary(ctx, occurrence, now)}${canContinue ? ` ${dispensePrompt}` : ""}`;
+      if (canContinue) next = "AWAITING_CONTINUE";
     } else if (args.intent === "REQUEST_MORE_INFORMATION") {
-      const canContinue = ["AWAITING_READINESS", "AWAITING_EDUCATION_CHOICE", "AWAITING_CONTINUE"].includes(session.state);
+      const canContinue = ["AWAITING_READINESS", "AWAITING_EDUCATION_CHOICE", "AWAITING_SUPPLY_CHOICE", "AWAITING_CONTINUE"].includes(session.state);
       response = education
-        ? `${education.spokenSummary}${canContinue ? " Would you like to continue with your scheduled medication routine?" : ""}`
+        ? `${education.spokenSummary}${canContinue ? ` ${questionsPrompt}` : ""}`
         : `I do not have reviewed medication education for ${medication.name}. Your caregiver-approved instruction is: ${medication.instructions || "No additional instruction is recorded"}.`;
       if (education && canContinue) {
-        next = "AWAITING_CONTINUE";
+        next = "AWAITING_SUPPLY_CHOICE";
         eventType = "EDUCATION_PRESENTED";
       }
     } else if (args.intent === "NO") {
-      if (session.state === "AWAITING_EDUCATION_CHOICE") {
+      if (session.state === "AWAITING_EDUCATION_CHOICE" || session.state === "AWAITING_SUPPLY_CHOICE") {
         next = "AWAITING_CONTINUE";
-        response = "Okay, we can skip that information. Are you ready to continue?";
+        response = dispensePrompt;
       } else if (["AWAITING_READINESS", "AWAITING_CONTINUE"].includes(session.state)) {
         next = "DECLINED";
         eventType = "SESSION_DECLINED";
@@ -230,10 +272,14 @@ export const respond = mutation({
         eventType = "ROUTINE_READY";
         response = `I do not have reviewed medication education for ${medication.name}. Your recorded instruction is: ${medication.instructions || "No additional instruction is recorded"}. I will continue only if the supervised demo hardware was armed first.`;
       } else {
-        next = "AWAITING_CONTINUE";
+        next = "AWAITING_SUPPLY_CHOICE";
         eventType = "EDUCATION_PRESENTED";
-        response = `${education.spokenSummary} Would you like to continue with your scheduled medication routine?`;
+        response = `${education.spokenSummary} ${questionsPrompt}`;
       }
+    } else if (session.state === "AWAITING_SUPPLY_CHOICE") {
+      // Legacy state name: this is now the open question turn after education.
+      // "Yes" means the user has a question, not that they approved movement.
+      response = "What would you like to know?";
     } else if (session.state === "AWAITING_CONTINUE") {
       next = "READY_FOR_SUPERVISED_ROUTINE";
       eventType = "ROUTINE_READY";
@@ -248,7 +294,7 @@ export const respond = mutation({
 
     const voiceHardwareReady =
       (eventType === "ROUTINE_READY" && args.source === "VOICE") ||
-      resumableUnattemptedVoiceReadiness;
+      (resumableUnattemptedVoiceReadiness && !recoverSkippedEducation);
     await ctx.db.patch("medicationInteractionSessions", session._id, {
       state: next,
       updatedAt: now,

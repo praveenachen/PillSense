@@ -8,6 +8,19 @@ export const demoTabs = [
 
 export type DemoTabId = (typeof demoTabs)[number]["id"];
 
+/** A due card selects its exact session; other cards open the Voice tab. */
+export function medicationCardAction(options: {
+  occurrenceId: string | null;
+  dueReminderId?: string;
+  onOpenReminder?: (occurrenceId: string) => void;
+  onOpenVoice?: () => void;
+  onOpenSchedule?: () => void;
+}) {
+  const { occurrenceId, dueReminderId, onOpenReminder, onOpenVoice, onOpenSchedule } = options;
+  if (occurrenceId && occurrenceId === dueReminderId && onOpenReminder) return () => onOpenReminder(occurrenceId);
+  return onOpenVoice ?? onOpenSchedule;
+}
+
 export type DemoPanelState = {
   id: DemoTabId;
   active: boolean;

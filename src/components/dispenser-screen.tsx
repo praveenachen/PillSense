@@ -25,6 +25,7 @@ export function DispenserScreen({ onOpenSetup }: { onOpenSetup: () => void }) {
   const [bluetoothBusy, setBluetoothBusy] = useState(false);
   const bluetoothBusyRef = useRef(false);
   const [bluetoothError, setBluetoothError] = useState<string | null>(null);
+  const armVoiceDemo = useMutation(api.hardwareLab.armVoiceDemo);
 
   async function bluetoothAction(action: "pair" | "verify") {
     if (bluetoothBusyRef.current) return;
@@ -33,7 +34,15 @@ export function DispenserScreen({ onOpenSetup }: { onOpenSetup: () => void }) {
     setBluetoothError(null);
     try {
       if (action === "pair") await gateway.connect();
-      else await gateway.getStatus();
+      else {
+        const reading = await gateway.getStatus();
+        if (reading.response !== "READY") throw new Error(`The dispenser reports ${reading.response}. It is not ready for the demo.`);
+        if (!gateway.connectionId || !gateway.isConnected()) throw new Error("The Arduino disconnected. Pair again before confirming Ready.");
+        if (gateway.motorDispatched) throw new Error("This browser session has already attempted a movement. Ready cannot reset that attempt.");
+        // The Ready click is the operator's physical confirmation, described
+        // beside the control. The server still enforces development/operator scope.
+        await armVoiceDemo({ connectionId: gateway.connectionId, observedStatus: "READY", emptyOrInertConfirmed: true, manualHomeConfirmed: true, movingPartsClear: true });
+      }
     } catch (error) {
       setBluetoothError(error instanceof Error ? error.message : "Bluetooth connection failed.");
     } finally {
@@ -63,6 +72,7 @@ export function DispenserScreen({ onOpenSetup }: { onOpenSetup: () => void }) {
   }
 
   return (
+    <>
     <DispenserView
       medications={dashboard.medications}
       device={dashboard.isSynthetic ? {
@@ -104,6 +114,7 @@ export function DispenserScreen({ onOpenSetup }: { onOpenSetup: () => void }) {
       }
       saveUnavailableMessage="This account can’t add medications. Sign in with the account that manages this dispenser."
     />
+    </>
   );
 }
 

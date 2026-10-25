@@ -11,6 +11,9 @@ import { runVoiceHardwareDemo, type VoiceHardwareStage } from "@/lib/voice/voice
 import { useArduinoGateway } from "./arduino-gateway-provider";
 import { VisionObservationPanel } from "./vision-observation-panel";
 import { reminderPrompt } from "@/lib/voice/reminder-prompt";
+import { replyAfterPlayback } from "@/lib/voice/playback-reply";
+import { watchMicrophoneSilence, type MicrophoneSilenceWatch } from "@/lib/voice/microphone-silence";
+import { selectFreshVoiceReminder } from "@/lib/voice/select-reminder";
 
 type Phase = "IDLE" | "LISTENING" | "PROCESSING" | "SPEAKING";
 type PendingAction =
@@ -23,7 +26,7 @@ function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : "Voice interaction failed. Touch controls remain available.";
 }
 
-type VoiceCompanionProps = { active?: boolean; startRequest?: { occurrenceId: string; token: number } | null };
+type VoiceCompanionProps = { active?: boolean; demoMode?: boolean; startRequest?: { occurrenceId: string; token: number; requestedAt?: number } | null };
 
 export function VoiceCompanion(props: VoiceCompanionProps = {}) {
   const auth = useConvexAuth();
@@ -31,7 +34,7 @@ export function VoiceCompanion(props: VoiceCompanionProps = {}) {
   return <AuthenticatedVoiceCompanion {...props} />;
 }
 
-function AuthenticatedVoiceCompanion({ active = true, startRequest }: VoiceCompanionProps) {
+function AuthenticatedVoiceCompanion({ active = true, demoMode = false, startRequest }: VoiceCompanionProps) {
   const [now, setNow] = useState(() => Date.now());
   const doses = useQuery(api.occurrences.listForPatient, { now });
   const reportIngestion = useMutation(api.dispensing.reportIngestion);
@@ -62,10 +65,12 @@ function AuthenticatedVoiceCompanion({ active = true, startRequest }: VoiceCompa
   const audioUrlRef = useRef<string | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
-  const chunksRef = useRef<Blob[]>([]);
   const recordingTimerRef = useRef<number | null>(null);
+  const silenceWatchRef = useRef<MicrophoneSilenceWatch | null>(null);
   const cancelledRef = useRef(false);
   const requestRef = useRef<AbortController | null>(null);
+  const speechRequestRef = useRef<AbortController | null>(null);
+  const playbackGenerationRef = useRef(0);
   const activeRef = useRef(active);
   const autoListenRef = useRef(false);
   const listenRef = useRef<(() => Promise<void>) | null>(null);
@@ -74,6 +79,9 @@ function AuthenticatedVoiceCompanion({ active = true, startRequest }: VoiceCompa
   const lifecycleRef = useRef(0);
   const launchedRequestRef = useRef<number | null>(null);
   const scheduledStartRef = useRef(false);
+  const [selectedReminder, setSelectedReminder] = useState<{ id: string; requestToken: number | null } | null>(null);
+  const conversationScopeRef = useRef<string | null>(null);
+  const conversationScopeInitialized = useRef(false);
 
   const addMessage = useCallback((role: VoiceMessage["role"], text: string) => {
     const cleaned = text.trim();
@@ -83,45 +91,58 @@ function AuthenticatedVoiceCompanion({ active = true, startRequest }: VoiceCompa
   }, []);
 
   const stopSpeaking = useCallback(() => {
+    playbackGenerationRef.current += 1;
+    speechRequestRef.current?.abort();
     if (audioRef.current) audioRef.current.onended = null;
     audioRef.current?.pause();
     if (audioRef.current) audioRef.current.currentTime = 0;
     setPhase((current) => current === "SPEAKING" ? "IDLE" : current);
   }, []);
 
-  const speak = useCallback(async (text: string, recordMessage = true) => {
+  const speak = useCallback(async (text: string, recordMessage = true, expectsReply = text.trim().endsWith("?")) => {
     const lifecycle = lifecycleRef.current;
     stopSpeaking();
+    const generation = playbackGenerationRef.current;
     setCaption(text);
     if (recordMessage) addMessage("assistant", text);
     setError(null);
     if (connection === "TEXT_ONLY" || !activeRef.current || cancelledRef.current) return false;
     setPhase("PROCESSING");
     const controller = new AbortController();
-    requestRef.current = controller;
+    speechRequestRef.current = controller;
     try {
       const response = await fetch("/api/voice/speak", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text }), signal: controller.signal });
       if (!response.ok) throw new Error("Cartesia speech is unavailable; the full message is still shown as text.");
       const blob = await response.blob();
-      if (!activeRef.current || cancelledRef.current || lifecycle !== lifecycleRef.current) return false;
+      if (!activeRef.current || cancelledRef.current || lifecycle !== lifecycleRef.current || generation !== playbackGenerationRef.current) return false;
       if (audioUrlRef.current) URL.revokeObjectURL(audioUrlRef.current);
       const url = URL.createObjectURL(blob);
       audioUrlRef.current = url;
       const audio = new Audio(url);
       audioRef.current = audio;
-      audio.onended = () => {
+      const isCurrent = () => generation === playbackGenerationRef.current && lifecycle === lifecycleRef.current && activeRef.current && !cancelledRef.current;
+      audio.onended = replyAfterPlayback({
+        expectsReply,
+        isCurrent,
+        onFinished: () => setPhase("IDLE"),
+        onReply: () => { if (autoListenRef.current) void listenRef.current?.(); },
+      });
+      audio.onerror = () => {
+        if (!isCurrent()) return;
+        audio.onended = null;
         setPhase("IDLE");
-        if (autoListenRef.current && activeRef.current && !cancelledRef.current && text.trim().endsWith("?")) void listenRef.current?.();
+        setError("Audio playback failed. The message remains available as text.");
       };
-      audio.onerror = () => { setPhase("IDLE"); setError("Audio playback failed. The message remains available as text."); };
       setPhase("SPEAKING");
       await audio.play();
       return true;
     } catch (caught) {
+      if (generation !== playbackGenerationRef.current || lifecycle !== lifecycleRef.current) return false;
+      if (audioRef.current) audioRef.current.onended = null;
       if ((caught as Error).name !== "AbortError") setError(errorMessage(caught));
       setPhase("IDLE");
       return false;
-    } finally { requestRef.current = null; }
+    } finally { if (speechRequestRef.current === controller) speechRequestRef.current = null; }
   }, [addMessage, connection, stopSpeaking]);
 
   useEffect(() => {
@@ -137,7 +158,10 @@ function AuthenticatedVoiceCompanion({ active = true, startRequest }: VoiceCompa
       lifecycleRef.current += 1;
       audioRef.current?.pause();
       if (recordingTimerRef.current) window.clearTimeout(recordingTimerRef.current);
+      silenceWatchRef.current?.stop();
       requestRef.current?.abort();
+      speechRequestRef.current?.abort();
+      playbackGenerationRef.current += 1;
       if (recorderRef.current?.state === "recording") recorderRef.current.stop();
       streamRef.current?.getTracks().forEach((track) => track.stop());
       if (audioUrlRef.current) URL.revokeObjectURL(audioUrlRef.current);
@@ -149,34 +173,89 @@ function AuthenticatedVoiceCompanion({ active = true, startRequest }: VoiceCompa
     return () => window.clearInterval(timer);
   }, []);
 
-  const relevant = doses?.occurrences.filter((dose) => dose.ingestionReport === "UNREPORTED" && dose.scheduledFor <= now + 30 * 60_000) ?? [];
-  const due = relevant.filter((dose) => now >= dose.eligibleFrom && now <= dose.expiresAt);
-  const scheduledDose = startRequest ? due.find((dose) => dose.id === startRequest.occurrenceId) : due[0];
+  const reminderNow = Math.max(now, startRequest?.requestedAt ?? 0);
+  const relevant = doses?.occurrences.filter((dose) => dose.ingestionReport === "UNREPORTED" && dose.scheduledFor <= reminderNow + 30 * 60_000) ?? [];
+  const due = relevant.filter((dose) => reminderNow >= dose.eligibleFrom && reminderNow <= dose.expiresAt);
+  const freshReminder = selectFreshVoiceReminder(doses?.occurrences ?? [], reminderNow, demoMode);
+  const requestToken = startRequest?.token ?? null;
+  const pinnedReminder = selectedReminder?.requestToken === requestToken ? relevant.find((dose) => dose.id === selectedReminder.id) : undefined;
+  const scheduledDose = pinnedReminder ?? (startRequest ? due.find((dose) => dose.id === startRequest.occurrenceId) : demoMode ? freshReminder : due[0]);
   const interaction = useQuery(
     api.medicationSessions.getForOccurrence,
     scheduledDose ? { occurrenceId: scheduledDose.id } : "skip",
   );
 
-  const startScheduledConversation = useCallback(async () => {
-    const dose = scheduledDose;
+  const startScheduledConversation = useCallback(async (greetOnResume = false, dose = scheduledDose) => {
     if (!dose || scheduledStartRef.current) return;
     scheduledStartRef.current = true;
+    conversationScopeRef.current = dose.id;
+    conversationScopeInitialized.current = true;
+    setSelectedReminder({ id: dose.id, requestToken });
     cancelledRef.current = false;
     autoListenRef.current = true;
+    const lifecycle = lifecycleRef.current;
     setError(null);
     try {
       const claimed = await claimGreeting({ occurrenceId: dose.id });
-      const played = await speak(reminderPrompt(claimed.session));
+      if (!activeRef.current || cancelledRef.current || lifecycle !== lifecycleRef.current) return;
+      const played = await speak(reminderPrompt(claimed.session, greetOnResume));
       if (claimed.shouldPlay) await recordGreetingOutcome({
         sessionId: claimed.session.id,
         outcome: played ? "PLAYED" : connection === "TEXT_ONLY" ? "PLAYBACK_BLOCKED" : "FAILED",
       });
     } catch (caught) {
+      if (!activeRef.current || lifecycle !== lifecycleRef.current) return;
       setError(errorMessage(caught));
     } finally {
       scheduledStartRef.current = false;
     }
-  }, [scheduledDose, claimGreeting, speak, recordGreetingOutcome, connection]);
+  }, [scheduledDose, requestToken, claimGreeting, speak, recordGreetingOutcome, connection]);
+
+  // A new synthetic scenario must not inherit the old chat, pending report,
+  // or local hardware banner. Never switch away from an operation still running.
+  useEffect(() => {
+    if (!doses || hardwareRun.current) return;
+    let disposed = false;
+    // Reconcile the external Convex update asynchronously, with cleanup so an
+    // older query notification cannot wipe a conversation just opened by a click.
+    queueMicrotask(() => {
+      if (disposed || hardwareRun.current) return;
+      const next = demoMode && freshReminder && pinnedReminder?.attemptStatus === "COMPLETED" && freshReminder.id !== pinnedReminder.id
+        ? freshReminder : scheduledDose;
+      const nextId = next?.id ?? null;
+      if (conversationScopeInitialized.current && conversationScopeRef.current === nextId) return;
+      conversationScopeInitialized.current = true;
+      cancelRef.current?.();
+      conversationScopeRef.current = nextId;
+      if (next && next.id !== scheduledDose?.id) setSelectedReminder({ id: next.id, requestToken });
+      setConversation([]);
+      setCaption("");
+      setTranscript("");
+      setTextInput("");
+      setError(null);
+      setSuccess(null);
+      setNothingCaptured(false);
+      setHardwareStage(null);
+    });
+    return () => { disposed = true; };
+  }, [doses, freshReminder, pinnedReminder, scheduledDose, requestToken, demoMode]);
+
+  function startFromVisual() {
+    if (hardwareRun.current || (pinnedReminder && ["AUTHORIZED", "DISPATCHED", "UNKNOWN"].includes(pinnedReminder.attemptStatus))) {
+      setError("The existing hardware attempt needs reconciliation. No new movement will be started.");
+      return;
+    }
+    if (!freshReminder) {
+      setError(doses ? demoMode ? "No fresh Iron Pills demo reminder is ready. Prepare a new successful-dose demo scenario, then click the visual again. Existing movement results are retained." : "No fresh medication reminder is currently due." : "Loading the current reminder. Try again in a moment.");
+      return;
+    }
+    cancelRef.current?.();
+    setConversation([]);
+    setCaption("");
+    setTranscript("");
+    setHardwareStage(null);
+    void startScheduledConversation(true, freshReminder);
+  }
 
   useEffect(() => {
     activeRef.current = active;
@@ -300,7 +379,7 @@ function AuthenticatedVoiceCompanion({ active = true, startRequest }: VoiceCompa
     if (cleaned) addMessage("user", cleaned);
     if (!cleaned) { setNothingCaptured(true); return; }
     const parsedSessionIntent = interaction ? parseMedicationSessionIntent(cleaned) : null;
-    const boundedIntent = interaction && (parsedSessionIntent === "REQUEST_MORE_INFORMATION" || !["DECLINED", "COMPLETED"].includes(interaction.state))
+    const boundedIntent = interaction && (parsedSessionIntent === "REQUEST_MORE_INFORMATION" || parsedSessionIntent === "REQUEST_SUPPLY_INFORMATION" || !["DECLINED", "COMPLETED"].includes(interaction.state))
       ? parsedSessionIntent : null;
     if (boundedIntent && scheduledDose) {
       const result = await respondToSession({ occurrenceId: scheduledDose.id, intent: boundedIntent, source });
@@ -317,7 +396,7 @@ function AuthenticatedVoiceCompanion({ active = true, startRequest }: VoiceCompa
       const confirmation = parseConfirmation(cleaned);
       if (confirmation === "CONFIRM") { await confirmPending(); return; }
       if (confirmation === "CANCEL") { setPending(null); await speak("Cancelled. No information was changed."); return; }
-      await speak("Please say confirm or cancel, or use the visible confirmation buttons."); return;
+      await speak("Please say confirm or cancel, or use the visible confirmation buttons.", true, true); return;
     }
     const intent = parseVoiceIntent(cleaned);
     if (intent.type === "SCHEDULED_DOSE_ASSISTANCE") {
@@ -338,18 +417,18 @@ function AuthenticatedVoiceCompanion({ active = true, startRequest }: VoiceCompa
       }
       const dose = relevant[0];
       setPending({ kind: "REPORT", occurrenceId: dose.id, medicationName: dose.medicationName, report: intent.report });
-      await speak(`I understood: record ${dose.medicationName} as ${intent.report === "TAKEN" ? "taken" : "not taken"}. Say confirm, or use the Confirm button. Nothing changes until you confirm.`);
+      await speak(`I understood: record ${dose.medicationName} as ${intent.report === "TAKEN" ? "taken" : "not taken"}. Say confirm, or use the Confirm button. Nothing changes until you confirm.`, true, true);
       return;
     }
     if (intent.type === "REPORT_DEVICE_PROBLEM") {
       setPending({ kind: "DEVICE", idempotencyKey: crypto.randomUUID(), transcript: cleaned });
-      await speak("I understood that the dispenser has a problem. Say confirm, or use the Confirm button, to notify the caregiver. This will not retry the motor.");
+      await speak("I understood that the dispenser has a problem. Say confirm, or use the Confirm button, to notify the caregiver. This will not retry the motor.", true, true);
       return;
     }
     await speak(intent.type === "AMBIGUOUS" ? "I am not certain what you meant. Please repeat one clear action or choose a visible option." : "That request is not supported by the Voice Companion. Choose one of the four visible actions.");
   }
 
-  function endTracks() { streamRef.current?.getTracks().forEach((track) => track.stop()); streamRef.current = null; }
+  function endTracks() { silenceWatchRef.current?.stop(); silenceWatchRef.current = null; streamRef.current?.getTracks().forEach((track) => track.stop()); streamRef.current = null; }
 
   async function transcribe(blob: Blob) {
     if (cancelledRef.current) return;
@@ -364,8 +443,12 @@ function AuthenticatedVoiceCompanion({ active = true, startRequest }: VoiceCompa
       if (!activeRef.current || cancelledRef.current || lifecycle !== lifecycleRef.current) return;
       if (typeof data.text !== "string") throw new Error("The transcription response was invalid.");
       setPhase("IDLE"); await interpret(data.text, "VOICE");
-    } catch (caught) { if ((caught as Error).name !== "AbortError") setError(errorMessage(caught)); setPhase("IDLE"); }
-    finally { requestRef.current = null; }
+    } catch (caught) {
+      if (!activeRef.current || cancelledRef.current || lifecycle !== lifecycleRef.current) return;
+      if ((caught as Error).name !== "AbortError") setError(errorMessage(caught));
+      setPhase("IDLE");
+    }
+    finally { if (requestRef.current === controller) requestRef.current = null; }
   }
 
   async function startListening() {
@@ -381,14 +464,33 @@ function AuthenticatedVoiceCompanion({ active = true, startRequest }: VoiceCompa
         stream.getTracks().forEach((track) => track.stop());
         return;
       }
-      streamRef.current = stream; chunksRef.current = [];
+      streamRef.current = stream;
+      const chunks: Blob[] = [];
       const recorder = new MediaRecorder(stream, MediaRecorder.isTypeSupported("audio/webm;codecs=opus") ? { mimeType: "audio/webm;codecs=opus" } : undefined);
+      let silence: MicrophoneSilenceWatch | null = null;
+      let stoppedForSilence = false;
       recorderRef.current = recorder;
-      recorder.ondataavailable = (event) => { if (event.data.size) chunksRef.current.push(event.data); };
-      recorder.onstop = () => { if (recordingTimerRef.current) window.clearTimeout(recordingTimerRef.current); endTracks(); const blob = new Blob(chunksRef.current, { type: recorder.mimeType || "audio/webm" }); if (canProcessRecording(cancelledRef.current, blob.size)) void transcribe(blob); else if (!cancelledRef.current) { setPhase("IDLE"); setNothingCaptured(true); } };
+      recorder.ondataavailable = (event) => { if (event.data.size) chunks.push(event.data); };
+      recorder.onstop = () => {
+        silence?.stop();
+        if (silenceWatchRef.current === silence) silenceWatchRef.current = null;
+        stream.getTracks().forEach((track) => track.stop());
+        if (lifecycle !== lifecycleRef.current || !activeRef.current || cancelledRef.current) return;
+        if (recordingTimerRef.current) window.clearTimeout(recordingTimerRef.current);
+        if (streamRef.current === stream) streamRef.current = null;
+        const blob = new Blob(chunks, { type: recorder.mimeType || "audio/webm" });
+        if (stoppedForSilence && silence?.available && !silence.heardActivity()) { setPhase("IDLE"); setNothingCaptured(true); }
+        else if (canProcessRecording(cancelledRef.current, blob.size)) void transcribe(blob);
+        else { setPhase("IDLE"); setNothingCaptured(true); }
+      };
       recorder.start(); setPhase("LISTENING");
+      silence = watchMicrophoneSilence(stream, () => {
+        if (recorder.state === "recording") { stoppedForSilence = true; recorder.stop(); }
+      });
+      silenceWatchRef.current = silence;
       recordingTimerRef.current = window.setTimeout(() => { if (recorder.state === "recording") recorder.stop(); }, MAX_RECORDING_MS);
     } catch (caught) {
+      if (!activeRef.current || cancelledRef.current || lifecycle !== lifecycleRef.current) return;
       endTracks(); setPhase("IDLE");
       const name = caught instanceof DOMException ? caught.name : "";
       setError(name === "NotAllowedError" || name === "SecurityError"
@@ -404,6 +506,7 @@ function AuthenticatedVoiceCompanion({ active = true, startRequest }: VoiceCompa
     autoListenRef.current = false;
     lifecycleRef.current += 1;
     cancelledRef.current = true;
+    if (recordingTimerRef.current) window.clearTimeout(recordingTimerRef.current);
     requestRef.current?.abort();
     if (recorderRef.current?.state === "recording") recorderRef.current.stop();
     endTracks();
@@ -423,30 +526,12 @@ function AuthenticatedVoiceCompanion({ active = true, startRequest }: VoiceCompa
     if (!dose || !selectionReport) return;
     setPending({ kind: "REPORT", occurrenceId: dose.id, medicationName: dose.medicationName, report: selectionReport });
     setSelectionReport(null);
-    void speak(`Confirm recording ${dose.medicationName} as ${selectionReport === "TAKEN" ? "taken" : "not taken"}.`);
+    void speak(`Confirm recording ${dose.medicationName} as ${selectionReport === "TAKEN" ? "taken" : "not taken"}.`, true, true);
   }
 
   return (
     <div className="flex flex-1 flex-col gap-4">
-      {scheduledDose && conversation.length === 0 && phase === "IDLE" && !startRequest && <button type="button" onClick={() => void startScheduledConversation()} className="pd-focus min-h-11 rounded-full bg-pd-accent px-4 text-sm font-semibold text-white">Talk about {scheduledDose.medicationName}</button>}
-      {(hardwareStage || interaction?.hardware) && (
-        <section className="pd-card border-pd-accent/25 p-4 text-pd-text" aria-live="polite" aria-label="Voice hardware status">
-          <p className="text-[0.65rem] font-bold uppercase tracking-[0.16em] text-pd-accent-soft">Dispenser</p>
-          <h2 className="mt-1 text-base font-semibold">{
-            hardwareStage === "PREPARING" ? "Preparing dispenser"
-              : hardwareStage === "MOVING" || interaction?.state === "MOVEMENT_IN_PROGRESS" ? "Physical movement in progress"
-                : hardwareStage === "COMPLETED" || interaction?.hardware?.status === "COMPLETED" ? "Motor sequence completed"
-                  : hardwareStage === "UNKNOWN" || interaction?.hardware?.status === "UNKNOWN" ? "Hardware outcome uncertain"
-                    : "Hardware action blocked"
-          }</h2>
-          <p className="mt-1 text-xs leading-5 text-pd-muted">Motor status only. Medication taken is reported separately.</p>
-          {interaction?.hardware?.status === "DISPATCHED" && (
-            <button type="button" onClick={() => void reconcilePersistedHardware()} className="pd-focus mt-3 min-h-10 w-full rounded-full border border-pd-line px-3 text-xs font-semibold text-pd-text">
-              {gateway.connected ? "Get existing result (read-only)" : "Reconnect and reconcile (read-only)"}
-            </button>
-          )}
-        </section>
-      )}
+      {startRequest && doses && !scheduledDose && !freshReminder && <p role="status" className="pd-card p-3 text-sm text-pd-muted">This reminder is no longer available. Open Home to choose your current reminder.</p>}
       {interaction?.state === "CAMERA_OBSERVATION_PENDING" && interaction.cameraConsent && (
         <section className="pd-card border-pd-accent/25 p-3 text-pd-text">
           <p className="mb-3 text-xs leading-5 text-pd-muted">Optional consented local observation is available now that the motor sequence has completed. A gesture does not prove ingestion.</p>
@@ -468,7 +553,8 @@ function AuthenticatedVoiceCompanion({ active = true, startRequest }: VoiceCompa
       nothingCaptured={nothingCaptured}
       onDismissNothing={() => setNothingCaptured(false)}
       onToggleListening={phase === "LISTENING" ? stopListening : startListening}
-      onReplay={() => void speak(caption, false)}
+      onStartConversation={conversation.length === 0 ? demoMode ? startFromVisual : scheduledDose ? () => void startScheduledConversation(true) : undefined : undefined}
+      onReplay={() => void speak(caption, false, Boolean(pending) || caption.trim().endsWith("?"))}
       onStopSpeaking={stopSpeaking}
       onCancelAll={cancelAll}
       onSuggest={(phrase) => void interpret(phrase)}
@@ -478,10 +564,18 @@ function AuthenticatedVoiceCompanion({ active = true, startRequest }: VoiceCompa
       onConfirm={() => void confirmPending()}
       onCancelPending={() => { setPending(null); void speak("Cancelled. No information was changed."); }}
       />
+      {(hardwareStage || interaction?.hardware) && <details className="text-xs text-pd-muted" aria-label="Voice hardware status"><summary className="pd-focus min-h-11 cursor-pointer py-3">Dispenser status</summary><div className="space-y-2 pb-3" aria-live="polite">
+        <p>{hardwareStage === "PREPARING" ? "Preparing dispenser"
+          : hardwareStage === "MOVING" || interaction?.state === "MOVEMENT_IN_PROGRESS" ? "Physical movement in progress"
+            : hardwareStage === "COMPLETED" || interaction?.hardware?.status === "COMPLETED" ? "Motor sequence completed"
+              : hardwareStage === "UNKNOWN" || interaction?.hardware?.status === "UNKNOWN" ? "Hardware outcome uncertain" : "Hardware action blocked"}</p>
+        <p>Motor status only. Medication taken is reported separately.</p>
+        {interaction?.hardware?.status === "DISPATCHED" && <button type="button" onClick={() => void reconcilePersistedHardware()} className="pd-focus min-h-11 rounded-full border border-pd-line px-4 text-pd-text">{gateway.connected ? "Get existing result (read-only)" : "Reconnect and reconcile (read-only)"}</button>}
+      </div></details>}
       {interaction && scheduledDose && <details className="text-xs text-pd-muted"><summary className="pd-focus min-h-11 cursor-pointer py-3">Reminder options</summary><div className="space-y-3 pb-3">
         {interaction.education.available && <button type="button" onClick={() => void interpret("side effects")} disabled={phase !== "IDLE"} className="pd-focus min-h-11 rounded-full border border-pd-line px-4 text-pd-text disabled:opacity-50">Hear side-effect information</button>}
         <label className="flex items-start gap-2 leading-5"><input type="checkbox" checked={interaction.cameraConsent} onChange={(event) => void setCameraConsent({ occurrenceId: scheduledDose.id, consent: event.target.checked })} className="mt-1 accent-violet-500" /><span>Allow optional local camera observation. A gesture does not prove ingestion.</span></label>
-        <button type="button" onClick={() => { setPending({ kind: "REPORT", occurrenceId: scheduledDose.id, medicationName: scheduledDose.medicationName, report: "TAKEN" }); void speak(`Confirm recording ${scheduledDose.medicationName} as taken.`); }} className="pd-focus min-h-11 rounded-full border border-pd-line px-4 text-pd-text">Report medication taken</button>
+        <button type="button" onClick={() => { setPending({ kind: "REPORT", occurrenceId: scheduledDose.id, medicationName: scheduledDose.medicationName, report: "TAKEN" }); void speak(`Confirm recording ${scheduledDose.medicationName} as taken.`, true, true); }} className="pd-focus min-h-11 rounded-full border border-pd-line px-4 text-pd-text">Report medication taken</button>
       </div></details>}
     </div>
   );

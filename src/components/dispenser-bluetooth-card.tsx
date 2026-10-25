@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { useArduinoGateway } from "./arduino-gateway-provider";
@@ -18,6 +18,11 @@ export function DispenserBluetoothCard() {
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 15_000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   // The server's arm is not proof that the browser still has a GATT connection.
   if (!arm || arm.status === "UNAVAILABLE") return null;
@@ -79,9 +84,9 @@ export function DispenserBluetoothCard() {
       <div className="border-t border-pd-line pt-3">
         <p className="text-xs font-bold uppercase tracking-wide text-red-400">Empty or inert demo props only · no real medications</p>
         <div className="mt-2 space-y-2 text-xs leading-5 text-pd-muted">
-          <label className="flex items-start gap-2"><input type="checkbox" checked={empty} onChange={(event) => setEmpty(event.target.checked)} disabled={armed || gateway.motorDispatched} className="mt-1 accent-pd-accent" />I physically confirmed the carousel is empty or contains only inert demo props, with no real medications.</label>
-          <label className="flex items-start gap-2"><input type="checkbox" checked={home} onChange={(event) => setHome(event.target.checked)} disabled={armed || gateway.motorDispatched} className="mt-1 accent-pd-accent" />I physically aligned Slot 0 before startup; no sensor verifies this.</label>
-          <label className="flex items-start gap-2"><input type="checkbox" checked={clear} onChange={(event) => setClear(event.target.checked)} disabled={armed || gateway.motorDispatched} className="mt-1 accent-pd-accent" />Hands, cables, and moving parts are clear.</label>
+          <label className="flex items-start gap-2"><input type="checkbox" checked={armed || empty} onChange={(event) => setEmpty(event.target.checked)} disabled={armed || gateway.motorDispatched} className="mt-1 accent-pd-accent" />I physically confirmed the carousel is empty or contains only inert demo props, with no real medications.</label>
+          <label className="flex items-start gap-2"><input type="checkbox" checked={armed || home} onChange={(event) => setHome(event.target.checked)} disabled={armed || gateway.motorDispatched} className="mt-1 accent-pd-accent" />I physically aligned Slot 0 before startup; no sensor verifies this.</label>
+          <label className="flex items-start gap-2"><input type="checkbox" checked={armed || clear} onChange={(event) => setClear(event.target.checked)} disabled={armed || gateway.motorDispatched} className="mt-1 accent-pd-accent" />Hands, cables, and moving parts are clear.</label>
         </div>
         <div className="mt-3 flex items-center justify-between gap-3">
           <span className={`text-xs font-semibold ${armedHere && ready ? "text-pd-ok" : "text-pd-muted"}`}>

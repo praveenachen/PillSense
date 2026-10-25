@@ -38,7 +38,7 @@ if (command === "reset" && !process.argv.includes("--yes")) {
 }
 
 const routes = {
-  seed: ["demoCli:seed", {}],
+  seed: ["demoCli:seed", { prepareVoiceReminder: true }],
   reset: ["demoCli:reset", {}],
   status: ["demoCli:status", {}],
   scenario: ["demoCli:prepareScenario", { scenario }],

@@ -130,6 +130,16 @@ export function pickNextDose(rows: readonly TimelineRow[]) {
   return rows.find((row) => row.state === "UPCOMING") ?? null;
 }
 
+/** An eligible reminder can cross midnight even though the daily timeline cannot. */
+export function pickHomeMedication(rows: readonly TimelineRow[], due?: DoseOccurrence): TimelineRow | null {
+  if (!due) return pickNextDose(rows);
+  return rows.find((row) => row.occurrenceId === due.id) ?? {
+    key: `occ:${due.id}`, at: due.scheduledFor, timeLabel: formatClock(due.scheduledFor),
+    medicationName: due.medicationName, instructions: due.instructions, slot: due.slot,
+    occurrenceId: due.id, isDemo: due.mode === "demo", state: "NEEDS_CONFIRMATION",
+  };
+}
+
 export type DoseDetails = { dosage: string; slotLabel: string; instruction: string | null };
 
 /**

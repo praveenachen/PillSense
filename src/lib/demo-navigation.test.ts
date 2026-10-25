@@ -1,7 +1,26 @@
-import { describe, expect, it } from "vitest";
-import { demoTabs, getDemoPanelStates, isDemoTabId } from "./demo-navigation";
+import { describe, expect, it, vi } from "vitest";
+import { demoTabs, getDemoPanelStates, isDemoTabId, medicationCardAction } from "./demo-navigation";
 
 describe("mobile demo navigation", () => {
+  it("opens Voice when the next medication does not yet have an eligible reminder", () => {
+    const voice = vi.fn();
+    const schedule = vi.fn();
+    const reminder = vi.fn();
+    medicationCardAction({ occurrenceId: null, onOpenVoice: voice, onOpenSchedule: schedule, onOpenReminder: reminder })?.();
+    expect(voice).toHaveBeenCalledOnce();
+    expect(schedule).not.toHaveBeenCalled();
+    expect(reminder).not.toHaveBeenCalled();
+  });
+  it("starts only the matching eligible occurrence and never a different reminder", () => {
+    const voice = vi.fn();
+    const reminder = vi.fn();
+    medicationCardAction({ occurrenceId: "iron-6", dueReminderId: "iron-6", onOpenVoice: voice, onOpenReminder: reminder })?.();
+    expect(reminder).toHaveBeenCalledWith("iron-6");
+    expect(voice).not.toHaveBeenCalled();
+    medicationCardAction({ occurrenceId: "other", dueReminderId: "iron-6", onOpenVoice: voice, onOpenReminder: reminder })?.();
+    expect(voice).toHaveBeenCalledOnce();
+    expect(reminder).toHaveBeenCalledTimes(1);
+  });
   it("exposes the five presentation sections in their intended order", () => {
     expect(demoTabs.map(({ id }) => id)).toEqual([
       "today",

@@ -56,14 +56,15 @@ function AuthenticatedDashboard() {
           <article key={medication.id} className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
             <div className="flex items-start justify-between gap-3">
               <div>
-                <p className="text-sm font-semibold uppercase tracking-wide text-teal-700">Upcoming schedule</p>
+                <p className="text-sm font-semibold uppercase tracking-wide text-teal-700">{medication.localTime ? "Upcoming schedule" : "Medication record"}</p>
                 <h3 className="mt-2 text-xl font-semibold">{medication.name}</h3>
               </div>
               <span className="rounded-full bg-slate-900 px-3 py-1 text-xs font-bold text-white">Slot {medication.slot}</span>
             </div>
-            <p className="mt-5 text-3xl font-semibold tracking-tight">{medication.localTime}</p>
-            <p className="mt-1 text-sm text-slate-500">{medication.timezone}</p>
-            <p className="mt-4 text-sm font-medium text-slate-700">{medication.weekdays.join(" · ")}</p>
+            <p className="mt-5 text-3xl font-semibold tracking-tight">{medication.localTime ?? "Unscheduled"}</p>
+            <p className="mt-1 text-sm text-slate-500">{medication.timezone ?? "No automatic dispensing"}</p>
+            {medication.localTime && <p className="mt-4 text-sm font-medium text-slate-700">{medication.weekdays.join(" · ")}</p>}
+            {medication.productDetails && <p className="mt-4 text-sm text-slate-600">{[medication.productDetails.activeIngredient, medication.productDetails.strength, medication.productDetails.dosageForm].filter(Boolean).join(" · ")}</p>}
             {medication.instructions && <p className="mt-4 border-t border-slate-100 pt-4 text-sm leading-6 text-slate-600">{medication.instructions}</p>}
             <p className="mt-4 text-xs text-slate-500">Demo inventory: {medication.demoInventory} inert pill</p>
           </article>

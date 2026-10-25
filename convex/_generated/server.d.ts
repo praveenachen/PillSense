@@ -32,6 +32,10 @@ type Env = {
   readonly CONVEX_SITE_URL: string;
   readonly PILLSENSE_AGENTVERSE_ALLOWED_SENDER: string | undefined;
   readonly PILLSENSE_AGENT_SERVICE_SECRET: string | undefined;
+  readonly WALGREENS_REFILL_API_KEY: string | undefined;
+  readonly WALGREENS_REFILL_AFF_ID: string | undefined;
+  readonly WALGREENS_MODE: string | undefined;
+  readonly WALGREENS_CALLBACK_URL: string | undefined;
 };
 
 /**

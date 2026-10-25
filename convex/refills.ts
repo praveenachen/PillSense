@@ -212,7 +212,13 @@ export const runLowSupplyDemo = mutation({
     const activeRun = await ctx.db.query("refillDemoRuns").withIndex("by_patient_and_status", (q) => q.eq("patientId", patient._id).eq("status", "ACTIVE")).unique();
     if (activeRun) return { created: false };
     const assignments = (await ctx.db.query("compartmentAssignments").withIndex("by_patient", (q) => q.eq("patientId", patient._id)).take(20)).filter((row) => row.active);
-    const assignment = assignments.find((row) => row.slot === 6) ?? assignments[0];
+    const withSchedule = [];
+    for (const row of assignments) {
+      const schedule = await ctx.db.query("medicationSchedules")
+        .withIndex("by_medication", (q) => q.eq("medicationId", row.medicationId)).first();
+      if (schedule?.active) withSchedule.push(row);
+    }
+    const assignment = withSchedule.find((row) => row.slot === 6) ?? withSchedule[0];
     if (!assignment) throw new ConvexError("Add a synthetic medication before running the refill demo");
     const now = Date.now();
     const demoRun = await ctx.db.insert("refillDemoRuns", { patientId: patient._id, assignmentId: assignment._id, previousSupplyCount: assignment.estimatedSupplyCount ?? null, previousSource: assignment.supplyEstimateSource ?? null, previousUpdatedAt: assignment.supplyEstimateUpdatedAt ?? null, previousRevision: assignment.supplyRevision ?? 0, status: "ACTIVE", initiatedBy: viewer._id, createdAt: now });

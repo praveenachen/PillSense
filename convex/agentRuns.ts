@@ -1,7 +1,7 @@
 import { ConvexError, v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { requireCaregiverAccess, resolveDashboardPatient } from "./lib/authorization";
-import { createOrReuseAdherenceRun } from "./lib/agentRunCreation";
+import { createOrReuseAdherenceRun, createOrReuseRefillRun } from "./lib/agentRunCreation";
 
 export const requestInvestigation = mutation({
   args: { careCaseId: v.id("careCases") },
@@ -33,36 +33,7 @@ export const requestRefillInvestigation = mutation({
     const patient = await ctx.db.get("appUsers", refillCase.patientId);
     if (!patient?.isSynthetic) throw new ConvexError("AI investigation is currently limited to synthetic demo patients");
     if (!["OPEN", "REVIEWED", "REFILL_REQUESTED"].includes(refillCase.status)) throw new ConvexError("Only active refill cases can be investigated");
-    const runs = await ctx.db.query("agentRuns").withIndex("by_refill_case", (q) => q.eq("refillCaseId", refillCase._id)).order("desc").take(20);
-    const active = runs.find((run) => run.status === "PENDING" || run.status === "RUNNING");
-    if (active?.caseVersion === refillCase.caseVersion) return { runId: active._id, status: active.status, created: false };
-    if (active) await ctx.db.patch("agentRuns", active._id, { status: "FAILED", failureCode: "STALE_CASE_VERSION", updatedAt: Date.now(), completedAt: Date.now() });
-    const completed = runs.find((run) => run.caseVersion === refillCase.caseVersion && run.status === "COMPLETED");
-    if (completed) return { runId: completed._id, status: completed.status, created: false };
-    const now = Date.now();
-    const attempt = runs.filter((run) => run.caseVersion === refillCase.caseVersion).length + 1;
-    const runId = await ctx.db.insert("agentRuns", {
-      runId: `${refillCase.caseId}:v${refillCase.caseVersion}:attempt${attempt}`,
-      refillCaseId: refillCase._id,
-      patientId: refillCase.patientId,
-      caseVersion: refillCase.caseVersion,
-      triggerReason: refillCase.triggerReason,
-      workflowType: "REFILL_INVESTIGATION",
-      status: "PENDING",
-      requestedBy: caregiver._id,
-      claimIdempotencyKey: null,
-      provider: null,
-      model: null,
-      findings: null,
-      failureCode: null,
-      submissionIdempotencyKey: null,
-      createdAt: now,
-      updatedAt: now,
-      claimedAt: null,
-      completedAt: null,
-    });
-    await ctx.db.patch("refillCases", refillCase._id, { investigationStatus: "PENDING", updatedAt: now });
-    return { runId, status: "PENDING" as const, created: true };
+    return createOrReuseRefillRun(ctx, refillCase, caregiver._id, Date.now(), { source: "CAREGIVER_UI" });
   },
 });
 

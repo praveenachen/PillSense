@@ -1,8 +1,9 @@
 import { v } from "convex/values";
 import { internalMutation } from "./_generated/server";
-import { createOrReuseAdherenceRun } from "./lib/agentRunCreation";
+import { createOrReuseAdherenceRun, createOrReuseRefillRun } from "./lib/agentRunCreation";
 
 const REQUEST_TYPE = "DEMO_ADHERENCE_INVESTIGATION" as const;
+const REFILL_REQUEST_TYPE = "DEMO_REFILL_STATUS" as const;
 const REQUEST_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const ADDRESS_PATTERN = /^agent1[a-z0-9]{20,100}$/;
 const ALIAS_PATTERN = /^demo-[a-z0-9]{20,64}$/;
@@ -28,7 +29,7 @@ export const acceptRequest = internalMutation({
     ) return { ok: false as const, code: "SENDER_NOT_ALLOWED" as const };
     if (
       args.protocolVersion !== "1.0" ||
-      args.requestType !== REQUEST_TYPE ||
+      (args.requestType !== REQUEST_TYPE && args.requestType !== REFILL_REQUEST_TYPE) ||
       !REQUEST_ID_PATTERN.test(args.requestId) ||
       !ALIAS_PATTERN.test(args.caseAlias)
     ) return { ok: false as const, code: "INVALID_REQUEST" as const };
@@ -58,8 +59,9 @@ export const acceptRequest = internalMutation({
     if (!scope || scope.status !== "ACTIVE" || scope.requestType !== args.requestType) {
       return { ok: false as const, code: "CASE_ALIAS_NOT_AUTHORIZED" as const };
     }
-    const [careCase, patient, relationship] = await Promise.all([
-      ctx.db.get("careCases", scope.careCaseId),
+    const [careCase, refillCase, patient, relationship] = await Promise.all([
+      scope.careCaseId ? ctx.db.get("careCases", scope.careCaseId) : null,
+      scope.refillCaseId ? ctx.db.get("refillCases", scope.refillCaseId) : null,
       ctx.db.get("appUsers", scope.patientId),
       ctx.db
         .query("careRelationships")
@@ -69,13 +71,19 @@ export const acceptRequest = internalMutation({
         .unique(),
     ]);
     if (
-      !careCase ||
-      careCase.patientId !== scope.patientId ||
-      careCase.status !== "OPEN" ||
-      careCase.caseVersion !== scope.caseVersion ||
       !patient?.isSynthetic ||
       relationship?.status !== "active"
     ) return { ok: false as const, code: "AUTHORIZED_CASE_UNAVAILABLE" as const };
+    if (args.requestType === REQUEST_TYPE &&
+      (!careCase || careCase.patientId !== scope.patientId || careCase.status !== "OPEN" || careCase.caseVersion !== scope.caseVersion)) {
+      return { ok: false as const, code: "AUTHORIZED_CASE_UNAVAILABLE" as const };
+    }
+    if (args.requestType === REFILL_REQUEST_TYPE &&
+      (!refillCase || refillCase.patientId !== scope.patientId ||
+        !["OPEN", "REVIEWED", "REFILL_REQUESTED"].includes(refillCase.status) ||
+        refillCase.caseVersion < scope.caseVersion)) {
+      return { ok: false as const, code: "AUTHORIZED_CASE_UNAVAILABLE" as const };
+    }
 
     const requestDocumentId = await ctx.db.insert("agentverseRequests", {
       requestKey,
@@ -83,12 +91,14 @@ export const acceptRequest = internalMutation({
       protocolVersion: "1.0",
       sourceAgentAddress: args.sourceAgentAddress,
       transport: args.transport,
-      requestType: REQUEST_TYPE,
+      requestType: args.requestType,
       caseAlias: args.caseAlias,
       scopeId: scope._id,
       caregiverId: scope.caregiverId,
       patientId: scope.patientId,
-      careCaseId: careCase._id,
+      careCaseId: careCase?._id,
+      refillCaseId: refillCase?._id,
+      caseVersion: scope.caseVersion,
       status: "ACK",
       outcomeCode: null,
       sentAt: args.sentAt,
@@ -100,13 +110,17 @@ export const acceptRequest = internalMutation({
       lastResponseSubmittedAt: null,
       updatedAt: args.now,
     });
-    const run = await createOrReuseAdherenceRun(
-      ctx,
-      careCase,
-      scope.caregiverId,
-      args.now,
-      { source: "AGENTVERSE", agentverseRequestId: requestDocumentId },
-    );
+    // Only a completed investigation for this exact case version may be reused; a newer case version needs a fresh run.
+    const priorRefillRun = refillCase ? (await ctx.db.query("agentRuns")
+      .withIndex("by_refill_case", (q) => q.eq("refillCaseId", refillCase._id))
+      .order("desc").take(20)).find((run) => run.status === "COMPLETED" && run.caseVersion === refillCase.caseVersion) : null;
+    const run = careCase && args.requestType === REQUEST_TYPE
+      ? await createOrReuseAdherenceRun(ctx, careCase, scope.caregiverId, args.now,
+        { source: "AGENTVERSE", agentverseRequestId: requestDocumentId })
+      : priorRefillRun
+        ? { runId: priorRefillRun._id, status: priorRefillRun.status, created: false }
+        : await createOrReuseRefillRun(ctx, refillCase!, scope.caregiverId, args.now,
+          { source: "AGENTVERSE", agentverseRequestId: requestDocumentId });
     await ctx.db.patch("agentverseRequests", requestDocumentId, {
       agentRunId: run.runId,
       updatedAt: args.now,
@@ -141,20 +155,47 @@ export const syncRequest = internalMutation({
       )
       .unique();
     if (!request?.agentRunId) return { ok: false as const, code: "REQUEST_NOT_FOUND" as const };
+    if (request.requestType === REFILL_REQUEST_TYPE) {
+      const [scope, relationship] = await Promise.all([
+        ctx.db.get("agentverseScopes", request.scopeId),
+        ctx.db.query("careRelationships").withIndex("by_caregiver_and_patient", (q) =>
+          q.eq("caregiverId", request.caregiverId).eq("patientId", request.patientId)).unique(),
+      ]);
+      if (scope?.status !== "ACTIVE" || relationship?.status !== "active") {
+        return { ok: false as const, code: "REQUEST_NOT_AUTHORIZED" as const };
+      }
+    }
     const run = await ctx.db.get("agentRuns", request.agentRunId);
-    if (!run || run.patientId !== request.patientId || run.careCaseId !== request.careCaseId) {
+    if (!run || run.patientId !== request.patientId ||
+        run.careCaseId !== request.careCaseId || run.refillCaseId !== request.refillCaseId) {
       return { ok: false as const, code: "RUN_LINK_INVALID" as const };
     }
     let status: "IN_PROGRESS" | "COMPLETED" | "FAILED";
     let outcomeCode: string | null = null;
     if (run.status === "COMPLETED") {
       status = "COMPLETED";
-      outcomeCode = "INVESTIGATION_AVAILABLE";
+      outcomeCode = request.requestType === REFILL_REQUEST_TYPE ? "REFILL_RECOMMENDED" : "INVESTIGATION_AVAILABLE";
     } else if (run.status === "FAILED") {
       status = "FAILED";
       outcomeCode = "COORDINATOR_FAILED";
     } else {
       status = "IN_PROGRESS";
+    }
+    if (request.requestType === REFILL_REQUEST_TYPE && run.status === "COMPLETED" && request.refillCaseId) {
+      const refillCase = await ctx.db.get("refillCases", request.refillCaseId);
+      const checkout = await ctx.db.query("walgreensCheckouts")
+        .withIndex("by_case", (q) => q.eq("refillCaseId", request.refillCaseId!))
+        .order("desc").first();
+      if (!refillCase || refillCase.patientId !== request.patientId) {
+        return { ok: false as const, code: "AUTHORIZED_CASE_UNAVAILABLE" as const };
+      }
+      outcomeCode = checkout?.status === "CHECKOUT_READY" ? "CHECKOUT_READY"
+        : checkout?.status === "CHECKOUT_RETURNED_UNVERIFIED" ? "CHECKOUT_RETURNED_UNVERIFIED"
+        : checkout?.status === "CANCELLED" || checkout?.status === "BACK" ? "CANCELLED"
+        : checkout?.status === "ERROR" ? "ERROR"
+        : refillCase.triggerReason === "UNKNOWN_SUPPLY" ? "SUPPLY_VERIFICATION_REQUIRED"
+        : refillCase.status === "REFILL_REQUESTED" ? "AWAITING_CAREGIVER_APPROVAL"
+        : "REFILL_RECOMMENDED";
     }
     if (request.status !== status || request.outcomeCode !== outcomeCode) {
       await ctx.db.patch("agentverseRequests", request._id, {

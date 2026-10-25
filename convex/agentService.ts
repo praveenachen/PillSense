@@ -13,6 +13,7 @@ const toolNameValidator = v.union(
   v.literal("get_supply_estimate"),
   v.literal("get_consumption_forecast"),
   v.literal("get_refill_case_history"),
+  v.literal("get_refill_checkout_status"),
 );
 
 const findingValidator = v.object({
@@ -194,7 +195,7 @@ async function toolEvidence(
   toolName: Doc<"agentActions">["toolName"],
 ) {
   if (run.workflowType === "REFILL_INVESTIGATION") {
-    const allowed = new Set(["get_supply_estimate", "get_consumption_forecast", "get_refill_case_history"]);
+    const allowed = new Set(["get_supply_estimate", "get_consumption_forecast", "get_refill_case_history", "get_refill_checkout_status"]);
     if (!allowed.has(toolName) || !run.refillCaseId) return { ok: false as const, code: "TOOL_NOT_ALLOWED_FOR_WORKFLOW" as const };
     const refillCase = await ctx.db.get("refillCases", run.refillCaseId);
     if (!refillCase || refillCase.patientId !== run.patientId) return { ok: false as const, code: "CASE_EVIDENCE_UNAVAILABLE" as const };
@@ -207,6 +208,16 @@ async function toolEvidence(
     const baseRefs = [`refillCase:${refillCase._id}`, `medication:${refillCase.medicationId}`];
     if (toolName === "get_supply_estimate") return { ok: true as const, summary: "Caregiver supply estimate read", evidenceReferences: assignment ? [...baseRefs, `assignment:${assignment._id}`] : baseRefs, data: { medicationName: medication?.name ?? "Unavailable", estimatedSupplyCount: refillCase.estimatedSupplyCount, source: refillCase.supplyEstimateSource, confidence: refillCase.confidence, uncertaintyReasons: refillCase.uncertaintyReasons, qualification: "This is not a sensor-confirmed physical count" } };
     if (toolName === "get_consumption_forecast") return { ok: true as const, summary: "Schedule-based consumption forecast read", evidenceReferences: [...baseRefs, ...schedules.map((row) => `schedule:${row._id}`)], data: { estimatedDaysRemaining: refillCase.estimatedDaysRemaining, expectedLowSupplyAt: refillCase.expectedLowSupplyAt, estimatedRunOutAt: refillCase.estimatedRunOutAt, thresholdDays: refillCase.lowSupplyThresholdDays, schedules: schedules.filter((row) => row.active).map((row) => ({ localTime: row.localTime, weekdays: row.weekdays, timezone: row.timezone })) } };
+    if (toolName === "get_refill_checkout_status") {
+      const checkout = await ctx.db.query("walgreensCheckouts")
+        .withIndex("by_case", (q) => q.eq("refillCaseId", refillCase._id))
+        .order("desc").first();
+      return { ok: true as const, summary: "Caregiver handoff status read", evidenceReferences: baseRefs,
+        data: { caseStatus: refillCase.status, investigationStatus: refillCase.investigationStatus,
+          approvalRequired: !checkout, checkoutStatus: checkout?.status ?? null,
+          environment: checkout?.environment ?? null,
+          qualification: "Checkout returns are unverified and do not prove fulfillment or delivery" } };
+    }
     return { ok: true as const, summary: "Refill case history read", evidenceReferences: [...baseRefs, ...transitions.map((row) => `refillTransition:${row._id}`)], data: { status: refillCase.status, triggerReason: refillCase.triggerReason, transitions: transitions.map((row) => ({ type: row.type, fromStatus: row.fromStatus, toStatus: row.toStatus, occurredAt: row.occurredAt, note: row.note ?? null })) } };
   }
   const allowed = new Set(["get_dose_context", "get_dispense_history", "get_device_status", "get_inventory_context", "get_patient_reports", "get_tray_observations"]);

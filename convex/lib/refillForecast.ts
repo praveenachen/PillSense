@@ -30,16 +30,15 @@ export function buildSupplyForecast(args: {
   hasMissedDoseUncertainty?: boolean;
 }): SupplyForecast {
   const thresholdDays = args.thresholdDays ?? 3;
+  if (args.schedules.length === 0) {
+    return { ...unknown(args.supplyCount, "NO_ACTIVE_SCHEDULE"), isActionable: false, triggerReason: null };
+  }
   if (args.supplyCount === null) {
     return unknown(args.supplyCount, "SUPPLY_NOT_RECORDED");
   }
   if (!Number.isSafeInteger(args.supplyCount) || args.supplyCount < 0) {
     return unknown(null, "INVALID_SUPPLY_ESTIMATE");
   }
-  if (args.schedules.length === 0) {
-    return unknown(args.supplyCount, "NO_ACTIVE_SCHEDULE");
-  }
-
   const windowEnd = args.now + FORECAST_DAYS * DAY_MS;
   const occurrences = args.schedules
     .flatMap((schedule) => occurrenceTimesForWindow({

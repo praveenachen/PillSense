@@ -18,7 +18,7 @@ from uagents_core.contrib.protocols.chat import (
 
 from agent.convex_client import ConvexBridgeError
 from agent.models import AgentverseAcceptance, AgentverseRequestStatus
-from fetch_agents.protocol import CareRequest, CareResponse, REQUEST_TYPE
+from fetch_agents.protocol import CareRequest, CareResponse, REQUEST_TYPE, REFILL_REQUEST_TYPE
 from fetch_agents.addresses import derive_address
 from fetch_agents.workflow import CareRequestWorkflow, ResponseTracker, WorkflowConfig
 from fetch_agents.asi_chat import AsiChatConfig, AsiOneChatWorkflow, classify_intent
@@ -231,6 +231,23 @@ def test_valid_request_hands_off_and_correlates_all_statuses() -> None:
     assert all(item.request_id == message.request_id for _, item in context.sent)
     assert bridge.marked == ["ACK", "IN_PROGRESS", "COMPLETED"]
     assert bridge.accepted[0]["case_alias"] == ALIAS
+
+
+def test_refill_request_returns_only_safe_structured_status() -> None:
+    bridge = FakeBridge(statuses=[AgentverseRequestStatus(
+        ok=True, status="COMPLETED", outcomeCode="AWAITING_CAREGIVER_APPROVAL",
+    )])
+    context = FakeContext()
+    message = CareRequest(
+        protocol_version="1.0", request_id=str(uuid.uuid4()),
+        request_type=REFILL_REQUEST_TYPE, case_alias=ALIAS,
+        sent_at=int(time.time() * 1000),
+    )
+    workflow = CareRequestWorkflow(bridge, WorkflowConfig(ALLOWED, 0.1, 0.001))
+    run(workflow, context, ALLOWED, message)
+    assert bridge.accepted[0]["request_type"] == REFILL_REQUEST_TYPE
+    assert context.sent[-1][1].detail_code == "AWAITING_CAREGIVER_APPROVAL"
+    assert context.sent[-1][1].status == "COMPLETED"
 
 
 def test_duplicate_request_is_rejected_without_second_handoff() -> None:

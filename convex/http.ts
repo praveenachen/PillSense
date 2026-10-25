@@ -16,6 +16,7 @@ const operations = new Set([
   "getSupplyEstimate",
   "getConsumptionForecast",
   "getRefillCaseHistory",
+  "getRefillCheckoutStatus",
   "submitInvestigation",
   "failRun",
   "acceptAgentverseRequest",
@@ -314,6 +315,7 @@ const service = httpAction(async (ctx, request) => {
     getSupplyEstimate: "get_supply_estimate",
     getConsumptionForecast: "get_consumption_forecast",
     getRefillCaseHistory: "get_refill_case_history",
+    getRefillCheckoutStatus: "get_refill_checkout_status",
   } as const;
   if (operation in toolByOperation) {
     const actionId = stringField(payload, "idempotencyKey", 160);
@@ -366,5 +368,33 @@ const methodNotAllowed = httpAction(async () =>
 const http = httpRouter();
 http.route({ path: "/agent/service", method: "POST", handler: service });
 http.route({ path: "/agent/service", method: "GET", handler: methodNotAllowed });
+
+http.route({
+  pathPrefix: "/walgreens/refill/callback/",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const url = new URL(request.url);
+    const token = url.pathname.slice("/walgreens/refill/callback/".length);
+    const action = url.searchParams.get("action");
+    const status = url.searchParams.get("status")?.toUpperCase();
+    const affiliateId = url.searchParams.get("affiliateID");
+    if (url.searchParams.getAll("action").length !== 1 ||
+        url.searchParams.getAll("status").length !== 1 ||
+        !token || !/^[0-9a-f]{64}$/.test(token) || action?.toLowerCase() !== "refill" ||
+        !status || !["DONE", "CANCEL", "BACK", "ERROR"].includes(status) ||
+        url.searchParams.getAll("affiliateID").length > 1) {
+      return new Response("Invalid checkout return", { status: 400, headers: { "cache-control": "no-store" } });
+    }
+    const result = await ctx.runMutation(internal.walgreens.recordCallback, {
+      tokenHash: await sha256(token), status, affiliateId: affiliateId ?? undefined, now: Date.now(),
+    });
+    if (!result.accepted) return new Response("Checkout return unavailable", { status: 410, headers: { "cache-control": "no-store" } });
+    const message = status === "DONE"
+      ? "Checkout return recorded. Pharmacy fulfillment has not been verified."
+      : "Checkout return recorded. Please review the refill status in PillSense.";
+    return new Response(message, { status: 200, headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" } });
+  }),
+});
+http.route({ pathPrefix: "/walgreens/refill/callback/", method: "POST", handler: methodNotAllowed });
 
 export default http;

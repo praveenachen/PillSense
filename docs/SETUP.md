@@ -15,7 +15,7 @@ Keep configuration split by runtime:
 
 | Location | Variables | Purpose |
 | --- | --- | --- |
-| `.env.local` | `CONVEX_DEPLOYMENT`, `NEXT_PUBLIC_CONVEX_URL`, `NEXT_PUBLIC_CONVEX_SITE_URL`, `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`, `CLERK_SECRET_KEY`, `CLERK_JWT_ISSUER_DOMAIN`, `CARTESIA_API_KEY`, optional `CARTESIA_VOICE_ID` | Next.js, Clerk, Cartesia server routes, and commands targeting the existing Convex development deployment |
+| `.env.local` | `CONVEX_DEPLOYMENT`, `NEXT_PUBLIC_CONVEX_URL`, `NEXT_PUBLIC_CONVEX_SITE_URL`, `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`, `CLERK_SECRET_KEY`, `CLERK_JWT_ISSUER_DOMAIN`, `CARTESIA_API_KEY`, optional `CARTESIA_VOICE_ID`, optional `ANTHROPIC_API_KEY` and `ANTHROPIC_VISION_MODEL` | Next.js, Clerk, Cartesia and Claude Vision server routes, and commands targeting the existing Convex development deployment |
 | `.env.agent` | `CONVEX_AGENT_URL`, `PILLSENSE_AGENT_SERVICE_SECRET`, `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL`, `AGENT_POLL_SECONDS` | Local Python coordinator only |
 | `.env.fetch` | `CONVEX_AGENT_URL`, `PILLSENSE_AGENT_SERVICE_SECRET`, stable uAgent seeds, derived agent addresses, synthetic case alias, bounded polling settings | Local Fetch.ai mailbox agents only |
 | Convex development environment | `PILLSENSE_AGENT_SERVICE_SECRET`, `PILLSENSE_AGENTVERSE_ALLOWED_SENDER`, and the deployed Clerk issuer configuration | Server-side bridge authentication, exact uAgent sender allowlist, and Clerk JWT validation |
@@ -30,7 +30,7 @@ Use separate terminals from the repository root:
 
 ```powershell
 # Terminal 1: keep the existing Convex development deployment connected
-npx.cmd convex dev
+npx convex dev
 
 # Terminal 2: Next.js
 npm run dev
@@ -41,9 +41,11 @@ agent\.venv\Scripts\python.exe -m agent.coordinator
 
 The coordinator uses `claude-sonnet-5-5` when `ANTHROPIC_API_KEY` is present. If the key is missing or Claude fails, it submits the explicitly labeled `DETERMINISTIC_FALLBACK` result. Do not run the worker merely to validate the key: a claimed investigation may make a paid Anthropic request.
 
+The scanner and medication save form require the Convex development deployment to have the current `convex/medications.ts` mutation and `convex/schema.ts` schema. `npm run dev` updates only Next.js. If Convex is not already running, `npx convex dev --once` syncs the existing development deployment before testing a scanned medication save. This command updates the remote development backend.
+
 ## Clerk + Convex authentication (remaining manual configuration)
 
-The React boundary is scaffolded with Clerk's `ClerkProvider` and Convex's `ConvexProviderWithClerk`. It activates only when both `NEXT_PUBLIC_CONVEX_URL` and `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` exist. Without them, the M0 route shells render but receive no Convex client and query no protected data.
+The React boundary is scaffolded with Clerk's `ClerkProvider` and Convex's `ConvexProviderWithClerk`. It activates only when both `NEXT_PUBLIC_CONVEX_URL` and `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` exist. Without them, routes show a setup message instead of rendering components that require the providers. Set both public variables at build time as well as in the hosting environment.
 
 1. Create or select a Clerk application.
 2. Add its publishable key as `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` and secret key as `CLERK_SECRET_KEY` in `.env.local` and the hosting environment.
@@ -105,7 +107,15 @@ The five-minute Convex cron and authenticated page reconciliation keep seven-day
 
 The `/caregiver` alert now provides **Investigate with AI** for open synthetic cases, and `/agent-activity` displays persistent run and tool activity. The deterministic alert does not depend on the worker.
 
-Python setup, server-only credential configuration, the polling command, browser walkthrough, and live-Claude smoke-test procedure are documented in `docs/AGENT_COORDINATOR.md`. No worker secret or Anthropic key belongs in `.env.local` or a `NEXT_PUBLIC_` variable. The worker defaults to the supported `claude-sonnet-5-5` model and uses the explicitly labeled non-LLM fallback when `ANTHROPIC_API_KEY` is absent or Claude fails.
+Python setup, server-only credential configuration, the polling command, browser walkthrough, and live-Claude smoke-test procedure are documented in `docs/AGENT_COORDINATOR.md`. The coordinator reads its Anthropic key from `.env.agent`; the separate medication scanner reads a server-only `ANTHROPIC_API_KEY` from `.env.local`. Neither key belongs in a `NEXT_PUBLIC_` variable. The worker defaults to `claude-sonnet-5-5` and uses the explicitly labeled non-LLM fallback when its key is absent or Claude fails.
+
+## Medication camera and refill demo
+
+In `/demo`, open **My Dispenser**, select an empty slot, and choose **Scan with camera**. The same scanner is available in `/caregiver` medication setup. Start the camera and hold a readable package label steady. The browser captures one stable image for Claude Vision; **Capture now** is available if auto capture does not trigger. Configure `ANTHROPIC_API_KEY` in `.env.local` to enable analysis. Review and correct all extracted details. Package quantity is only label text, not verified inventory. A scanned OTC medication starts with **Configure scheduled dispensing** unchecked; saving creates an unscheduled medication record visible in the caregiver and patient medication views. It does not create reminders or automatic dispensing. Enabling a schedule in the mobile slot form requires the caregiver to enter the dose, instructions, time, and weekdays explicitly.
+
+For the separate refill demo, create a scheduled synthetic medication, run **Synthetic low-supply demo**, mark its case reviewed, and record refill requested. Start **Investigate with AI**, or use **Authorize Fetch.ai demo** to expose an opaque case alias for the existing external agent path. The coordinator must be running to complete the investigation. Once completed, **Approve and prepare Walgreens checkout** uses an official synthetic Walgreens test Rx. The checkout status remains visible in the caregiver refill card. The hosted return is unverified and does not alter inventory; recording physical receipt is a separate caregiver action.
+
+Set `WALGREENS_MODE=sandbox` and the sandbox credentials in the Convex deployment for a Walgreens QA checkout. With no Walgreens mode or API key, the backend uses mock mode and generates a simulated callback link. `WALGREENS_CALLBACK_URL` can be set explicitly; otherwise the Convex site URL supplies the callback base. No production pharmacy order is initiated.
 
 ## M5 refill forecast demo
 

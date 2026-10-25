@@ -6,7 +6,7 @@ import uuid
 
 from uagents import Agent, Context
 
-from .protocol import CareRequest, CareResponse, PROTOCOL_VERSION, REQUEST_TYPE, care_protocol
+from .protocol import CareRequest, CareResponse, PROTOCOL_VERSION, REQUEST_TYPE, REFILL_REQUEST_TYPE, care_protocol
 from .settings import ExternalAgentSettings
 from .workflow import ResponseTracker
 
@@ -15,6 +15,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="External synthetic care request uAgent")
     parser.add_argument("--send", action="store_true", help="Send one demo request after startup")
     parser.add_argument("--case-alias", help="Caregiver-authorized synthetic case alias")
+    parser.add_argument("--refill", action="store_true", help="Request safe refill status for a caregiver-authorized synthetic case")
     args = parser.parse_args()
     settings = ExternalAgentSettings.from_environment(args.case_alias)
     request_id = str(uuid.uuid4())
@@ -35,7 +36,7 @@ def main() -> None:
         message = CareRequest(
             protocol_version=PROTOCOL_VERSION,
             request_id=request_id,
-            request_type=REQUEST_TYPE,
+            request_type=REFILL_REQUEST_TYPE if args.refill else REQUEST_TYPE,
             case_alias=settings.case_alias,
             sent_at=int(time.time() * 1000),
         )

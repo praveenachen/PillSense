@@ -3,6 +3,37 @@ import { mutation, query } from "./_generated/server";
 import { requireCaregiverAccess, resolveDashboardPatient } from "./lib/authorization";
 
 const REQUEST_TYPE = "DEMO_ADHERENCE_INVESTIGATION" as const;
+const REFILL_REQUEST_TYPE = "DEMO_REFILL_STATUS" as const;
+
+export const preauthorizeRefillCase = mutation({
+  args: { refillCaseId: v.id("refillCases") },
+  handler: async (ctx, args) => {
+    const refillCase = await ctx.db.get("refillCases", args.refillCaseId);
+    if (!refillCase) throw new ConvexError("Refill case unavailable");
+    const { caregiver } = await requireCaregiverAccess(ctx, refillCase.patientId);
+    const patient = await ctx.db.get("appUsers", refillCase.patientId);
+    if (!patient?.isSynthetic || !["OPEN", "REVIEWED", "REFILL_REQUESTED"].includes(refillCase.status)) {
+      throw new ConvexError("Active synthetic refill case required");
+    }
+    const scopes = await ctx.db.query("agentverseScopes")
+      .withIndex("by_refill_case", (q) => q.eq("refillCaseId", refillCase._id))
+      .order("desc").take(50);
+    const existing = scopes.find((scope) =>
+      scope.caseVersion === refillCase.caseVersion && scope.status === "ACTIVE");
+    if (existing) return { alias: existing.alias, created: false };
+    const now = Date.now();
+    for (const scope of scopes.filter((scope) => scope.status === "ACTIVE")) {
+      await ctx.db.patch("agentverseScopes", scope._id, { status: "REVOKED", updatedAt: now });
+    }
+    const alias = `demo-${crypto.randomUUID().replaceAll("-", "")}`;
+    await ctx.db.insert("agentverseScopes", {
+      alias, caregiverId: caregiver._id, patientId: refillCase.patientId,
+      refillCaseId: refillCase._id, caseVersion: refillCase.caseVersion,
+      requestType: REFILL_REQUEST_TYPE, status: "ACTIVE", createdAt: now, updatedAt: now,
+    });
+    return { alias, created: true };
+  },
+});
 
 export const preauthorizeDemoCase = mutation({
   args: { careCaseId: v.id("careCases") },
@@ -116,6 +147,7 @@ export const listForCaregiver = query({
         id: scope._id,
         alias: scope.alias,
         careCaseId: scope.careCaseId,
+        refillCaseId: scope.refillCaseId ?? null,
         caseVersion: scope.caseVersion,
         requestType: scope.requestType,
         status: scope.status,

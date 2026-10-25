@@ -52,7 +52,8 @@ function AuthenticatedSchedule() {
     attemptStatus: dose.attemptStatus,
     ingestionReport: dose.ingestionReport,
   }));
-  const medications: ScheduleMedication[] = dashboard.medications.map((medication) => ({
+  // Unscheduled (e.g. scanned OTC) medications have no time or timezone and are not part of the schedule.
+  const medications: ScheduleMedication[] = dashboard.medications.flatMap((medication) => medication.localTime === null || medication.timezone === null ? [] : [{
     id: medication.id,
     name: medication.name,
     instructions: medication.instructions ?? "",
@@ -60,7 +61,7 @@ function AuthenticatedSchedule() {
     localTime: medication.localTime,
     weekdays: medication.weekdays,
     timezone: medication.timezone,
-  }));
+  }]);
   const reminderRows: ScheduleReminder[] = reminders.reminders.map((reminder) => ({
     occurrenceId: reminder.occurrenceId,
     followUpNeeded: reminder.followUpNeeded,

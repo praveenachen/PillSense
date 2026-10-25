@@ -29,6 +29,22 @@ async function createCareTeam(tokenIdentifier: string) {
 }
 
 describe("medication assignment security and validation", () => {
+  it("saves scanned OTC details in the existing medication and slot without creating a schedule", async () => {
+    const { root, actor, patientId } = await createCareTeam("issuer|unscheduled-otc");
+    const saved = await actor.mutation(api.medications.createWithAssignment, {
+      ...baseMedication, patientId, name: "Advil 200 mg tablet", instructions: "", scheduled: false,
+      productDetails: { brand: "Advil", activeIngredient: "ibuprofen", strength: "200 mg", dosageForm: "tablet", otherVisibleDetails: [] },
+    });
+    const schedules = await root.run((ctx) => ctx.db.query("medicationSchedules").withIndex("by_medication", (q) => q.eq("medicationId", saved.medicationId)).take(2));
+    expect(schedules).toHaveLength(0);
+    const setup = await actor.query(api.caregiver.setup, {});
+    const dashboard = await actor.query(api.patient.dashboard, {});
+    expect(setup.status === "ready" && setup.medications[0]).toMatchObject({ name: "Advil 200 mg tablet", localTime: null, productDetails: { activeIngredient: "ibuprofen" } });
+    expect(dashboard.status === "ready" && dashboard.medications[0]).toMatchObject({ name: "Advil 200 mg tablet", localTime: null });
+    const forecast = await actor.query(api.refills.listForCaregiver, {});
+    expect(forecast.status === "ready" && forecast.cases[0]?.forecast.triggerReason).toBeNull();
+  });
+
   it("rejects reserved position 0", async () => {
     const { actor, patientId } = await createCareTeam("issuer|slot-zero");
 

@@ -9,10 +9,11 @@ import { reasonLabels, type CareCaseItem } from "./caregiver-alerts";
 import { CaseInvestigationDetail } from "./case-investigation-detail";
 import { DeviceStatusCard, NeedsAttentionCard, RefillStatusCard } from "./care-cards";
 import { Icon } from "./mobile-ui";
+import { WalgreensRefillControls } from "./walgreens-refill-controls";
 import { caregiverActivityLabel, caregiverActivityState, caregiverNextAction, dedupeCaregiverActivity, getCareProgress, pickPriorityCase, type CaregiverActivityState } from "@/lib/care-dashboard";
 
 type CareTab = "overview" | "activity";
-type SetupMedication = { medicationId: string; name: string; slot: number; localTime: string; demoInventory: number; instructions: string | null };
+type SetupMedication = { medicationId: string; name: string; slot: number; localTime: string | null; demoInventory: number; instructions: string | null };
 
 export function DemoCarePanel({ account }: { account?: ReactNode }) {
   const auth = useConvexAuth();
@@ -118,6 +119,12 @@ function AuthorizedCare({ account, patientName, medications }: { account?: React
         {focus ? <NeedsAttentionCard item={focus} count={unresolved.length} onOpen={() => openCase(focus.id)} /> : <section className="pd-card p-4"><h2 className="text-lg font-semibold">Needs attention</h2><p className="mt-3 flex items-center gap-2 text-sm font-semibold text-pd-ok"><Icon name="check" size={18} /> Nothing needs attention</p><p className="mt-2 text-xs leading-5 text-pd-muted">Care cases appear only when recorded evidence needs caregiver follow-up.</p></section>}
 
         <RefillStatusCard medicationName={refill?.medicationName ?? null} daysLeft={refill?.forecast.estimatedDaysRemaining ?? null} />
+        {refill?.refillCase && ["OPEN", "REVIEWED", "REFILL_REQUESTED"].includes(refill.refillCase.status) && (
+          <WalgreensRefillControls
+            caseId={refill.refillCase._id}
+            eligible={refill.refillCase.status === "REFILL_REQUESTED" && refill.refillCase.investigationStatus === "COMPLETED" && refill.refillCase.triggerReason === "LOW_SUPPLY" && refill.refillCase.estimatedSupplyCount !== null}
+          />
+        )}
 
         <DeviceStatusCard device={occurrences.device} medicationCount={medications.length} />
 

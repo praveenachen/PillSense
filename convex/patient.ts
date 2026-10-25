@@ -44,19 +44,20 @@ export const dashboard = query({
             q.eq("medicationId", assignment.medicationId),
           )
           .unique();
-        if (!medication || !schedule || !medication.active || !schedule.active) {
+        if (!medication || !medication.active) {
           return null;
         }
         return {
           id: medication._id,
           name: medication.name,
           instructions: medication.instructions,
+          productDetails: medication.productDetails ?? null,
           slot: assignment.slot,
           demoInventory: assignment.demoInventory,
           supplyCount: assignment.estimatedSupplyCount ?? null,
-          localTime: schedule.localTime,
-          weekdays: schedule.weekdays,
-          timezone: schedule.timezone,
+          localTime: schedule?.active ? schedule.localTime : null,
+          weekdays: schedule?.active ? schedule.weekdays : [],
+          timezone: schedule?.active ? schedule.timezone : null,
         };
       }),
     );
@@ -70,7 +71,7 @@ export const dashboard = query({
         .sort((a, b) =>
           a.localTime === b.localTime
             ? a.slot - b.slot
-            : a.localTime.localeCompare(b.localTime),
+            : (a.localTime ?? "99:99").localeCompare(b.localTime ?? "99:99"),
         ),
     };
   },

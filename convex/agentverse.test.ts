@@ -49,6 +49,76 @@ function requestArgs(alias: string, requestId = "018f47a8-9abc-7def-8123-1234567
 }
 
 describe("M7 Agentverse care-request boundary", () => {
+  it("routes a caregiver-scoped refill request through the existing coordinator run", async () => {
+    const data = await setup("issuer|agentverse-refill");
+    const assignment = await data.root.run(async (ctx) => (await ctx.db.query("compartmentAssignments").take(1))[0]);
+    await data.actor.mutation(api.refills.adjustVerifiedSupply, { assignmentId: assignment._id, count: 2 });
+    const listed = await data.actor.query(api.refills.listForCaregiver, {});
+    if (listed.status !== "ready" || !listed.cases[0]?.refillCase) throw new Error("Refill case missing");
+    const refillCaseId = listed.cases[0].refillCase._id;
+    const authorization = await data.actor.mutation(api.agentverse.preauthorizeRefillCase, { refillCaseId });
+    const args = { ...requestArgs(authorization.alias, "018f47a8-9abc-7def-8123-123456789acf"), requestType: "DEMO_REFILL_STATUS" };
+    expect(await data.root.mutation(internal.agentverseService.acceptRequest, {
+      ...args, sourceAgentAddress: `agent1${"x".repeat(60)}`,
+    })).toMatchObject({ ok: false, code: "SENDER_NOT_ALLOWED" });
+    const accepted = await data.root.mutation(internal.agentverseService.acceptRequest, args);
+    expect(accepted).toMatchObject({ ok: true, status: "ACK" });
+    if (!accepted.ok) throw new Error("Refill request not accepted");
+    const run = await data.root.run((ctx) => ctx.db.get("agentRuns", accepted.linkedRunId));
+    expect(run).toMatchObject({ refillCaseId, workflowType: "REFILL_INVESTIGATION", source: "AGENTVERSE" });
+    await data.root.run((ctx) => ctx.db.patch("agentRuns", accepted.linkedRunId, {
+      status: "COMPLETED", provider: "DETERMINISTIC_FALLBACK", completedAt: Date.now(),
+    }));
+    const syncArgs = { expectedSender: ALLOWED, sourceAgentAddress: ALLOWED,
+      transport: "UAGENT_A2A" as const, requestId: args.requestId, now: Date.now() };
+    expect(await data.root.mutation(internal.agentverseService.syncRequest, syncArgs))
+      .toMatchObject({ status: "COMPLETED", outcomeCode: "REFILL_RECOMMENDED" });
+    await data.root.run(async (ctx) => {
+      const now = Date.now();
+      await ctx.db.insert("walgreensCheckouts", {
+        refillCaseId, patientId: run!.patientId, caregiverId: run!.requestedBy,
+        provider: "WALGREENS", environment: "MOCK", status: "CHECKOUT_READY",
+        approvedAt: now, updatedAt: now,
+      });
+    });
+    expect(await data.root.mutation(internal.agentverseService.syncRequest, syncArgs))
+      .toMatchObject({ status: "COMPLETED", outcomeCode: "CHECKOUT_READY" });
+    const scope = await data.root.run((ctx) => ctx.db.query("agentverseScopes")
+      .withIndex("by_alias", (q) => q.eq("alias", authorization.alias)).unique());
+    if (!scope) throw new Error("Scope missing");
+    await data.actor.mutation(api.agentverse.revokeDemoScope, { scopeId: scope._id });
+    expect(await data.root.mutation(internal.agentverseService.syncRequest, syncArgs))
+      .toMatchObject({ ok: false, code: "REQUEST_NOT_AUTHORIZED" });
+  });
+  it("does not reuse a completed refill run from an older case version", async () => {
+    const data = await setup("issuer|agentverse-stale-run");
+    const assignment = await data.root.run(async (ctx) => (await ctx.db.query("compartmentAssignments").take(1))[0]);
+    await data.actor.mutation(api.refills.adjustVerifiedSupply, { assignmentId: assignment._id, count: 2 });
+    const listed = await data.actor.query(api.refills.listForCaregiver, {});
+    if (listed.status !== "ready" || !listed.cases[0]?.refillCase) throw new Error("Refill case missing");
+    const refillCaseId = listed.cases[0].refillCase._id;
+    const authorization = await data.actor.mutation(api.agentverse.preauthorizeRefillCase, { refillCaseId });
+    const first = { ...requestArgs(authorization.alias, "018f47a8-9abc-7def-8123-123456789ad0"), requestType: "DEMO_REFILL_STATUS" };
+    const accepted = await data.root.mutation(internal.agentverseService.acceptRequest, first);
+    if (!accepted.ok) throw new Error("First request not accepted");
+    await data.root.run((ctx) => ctx.db.patch("agentRuns", accepted.linkedRunId, { status: "COMPLETED", provider: "DETERMINISTIC_FALLBACK", completedAt: Date.now() }));
+
+    // Same case at the same version: the completed run is reused.
+    const sameVersion = await data.root.mutation(internal.agentverseService.acceptRequest, { ...first, requestId: "018f47a8-9abc-7def-8123-123456789ad1" });
+    expect(sameVersion).toMatchObject({ ok: true, linkedRunId: accepted.linkedRunId });
+
+    // The case changes (new version): the old completed run no longer describes it, so a fresh run is created.
+    const version = await data.root.run(async (ctx) => {
+      const current = await ctx.db.get("refillCases", refillCaseId);
+      await ctx.db.patch("refillCases", refillCaseId, { caseVersion: current!.caseVersion + 1 });
+      return current!.caseVersion + 1;
+    });
+    const newer = await data.root.mutation(internal.agentverseService.acceptRequest, { ...first, requestId: "018f47a8-9abc-7def-8123-123456789ad2" });
+    if (!newer.ok) throw new Error("Newer request not accepted");
+    expect(newer.linkedRunId).not.toBe(accepted.linkedRunId);
+    const freshRun = await data.root.run((ctx) => ctx.db.get("agentRuns", newer.linkedRunId));
+    expect(freshRun).toMatchObject({ caseVersion: version, status: "PENDING" });
+  });
   it("requires an authenticated caregiver to pre-authorize a synthetic case", async () => {
     const data = await setup("issuer|agentverse-owner");
     const other = data.root.withIdentity({ tokenIdentifier: "issuer|agentverse-other" });
